@@ -107,14 +107,6 @@ Deeper guides: [`CLAUDE.md`](CLAUDE.md) (top-level conventions),
 [`src/etl/education/CLAUDE.md`](src/etl/education/CLAUDE.md) (domain conventions),
 [`docs/data-cleaning.md`](docs/data-cleaning.md) (end-to-end walkthrough).
 
-## Contributing
-
-Issues and PRs that improve data quality, provenance documentation, contracts, or the
-shared toolkit are welcome. Because this is a generated mirror, code changes are ultimately
-integrated in the upstream monorepo; a merged PR here will be reflected there. Please keep
-the medallion rule (edit `transform.py`, never gold) and make sure `uv run pytest` and
-`scripts/check_contracts.py` pass.
-
 ## License
 
 [MIT](LICENSE) © 2026 Shane Orr.
