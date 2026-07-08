@@ -1,0 +1,524 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.decision_points
+name: decision_points
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Juvenile-justice decision-point counts for Georgia counties, aggregated from the Georgia Juvenile
+    Justice Data Clearinghouse''s pseudonymized youth-level file: distinct youths with juvenile-court
+    contact and their counts of offenses, diversions, petitions, delinquent adjudications, probation orders,
+    commitment orders, superior-court sentences, and new secure placements, by county, race, and gender,
+    2010-2025. Decision points are defined with the US DOJ under the JJDP Act.'
+  usage: Attribute the Georgia Juvenile Justice Data Clearinghouse (juveniledata.georgiacourts.gov). Filter
+    demographic to one axis at a time ('all', the race values, or the gender values); use state rows for
+    statewide figures instead of summing county rows (distinct-youth counts are not additive across counties,
+    and out-of-state youths appear only in the state rollup).
+  limitations: State rows have NULL county_fips. The source publishes no suppression — metric values are
+    never NULL and zeros are real. Distinct-youth counts (num_youth and the two secure-placement counts)
+    are not additive across counties, demographic values, or years; summed event counts are additive within
+    one demographic axis. Youths labeled OUT OF STATE by the source (~1% of youth-years) are included
+    in state rows but absent from county rows, so county event counts sum slightly below the state row.
+    The source's undocumented court-type axis (codes D/I/S) and its publication-time active/terminated
+    case-status flag are aggregated over and not served. Secure-placement counts are likely incomplete
+    for 2023-2025 (source indicator coverage collapses in those years). The companion county/month case-flow
+    file published alongside this data (65 self-reporting counties, 2005-2025) is a different universe
+    and is not included in this dataset.
+tags:
+- criminal_justice
+- georgia juvenile justice data clearinghouse
+- decision_points
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/decision_points/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/decision_points/**/*.parquet
+  format: parquet
+schema:
+- name: decision_points
+  logicalType: object
+  physicalType: parquet
+  physicalName: decision_points
+  description: decision_points fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, demographic (geography columns are NULL at
+    higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: juvenile_clearinghouse
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+  - property: key_metric
+    value: num_youth
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/decision_points/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), counties detail
+      query: SELECT * FROM decision_points WHERE year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year of the juvenile-court contact (source 'Period Year'; not a fiscal or school
+      year).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the Georgia county reporting the youth's
+      court contact; FK to the counties dimension. NULL on state-level rows. Youths labeled OUT OF STATE
+      by the source (~1% of youth-years) carry no county and appear only in the state rollup.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic slice. Three overlapping axes are packed into this column: ''all'' (every
+      youth), race (asian/black/hispanic/native_american/other/white), and gender (male/female) — filter
+      to one axis; summing across axes double-counts. Race values follow the source''s 6-bucket scheme:
+      hispanic is a mutually exclusive bucket (other races exclude Hispanic youths), and no Pacific Islander
+      bucket exists anywhere in the source — bare source ''Asian'' is mapped to asian as published, with
+      any Pacific Islander youths most plausibly reported in the explicit ''other'' catch-all. The source
+      reports a small number of youths under more than one race or gender across row segments — entirely
+      confined to 2025 in the current publication (228 multi-race and 247 multi-gender youths, ~1.8% of
+      2025 youths; zero in 2010-2024). Such a youth is counted once in each reported bucket, so in 2010-2024
+      race/gender num_youth partitions the ''all'' row exactly, while in 2025 it sums ~2% above it.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian'
+    - 'black'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'native_american'
+    - 'other'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Youth group the row covers: every youth (all), one race group, or one gender group.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: num_youth
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Distinct youths (pseudonymized source IDs) with juvenile-court contact in the cell.
+      NOT additive: a youth with contact in two counties counts once in each county but once statewide,
+      so county rows generally sum above the state row — though out-of-state youths (counted only statewide)
+      can reverse this, as in 2025; likewise never sum across demographic values or years. Every counted
+      youth has at least one offense (rows exist only where contact occurred), so num_offenses >= num_youth
+      in every cell.'
+    examples:
+    - 512
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Youth
+    - property: short_description
+      value: Distinct youths with juvenile-court contact in the county, year, and demographic group.
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: num_offenses
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Total offenses across the cell's youths in the year. Event counts (this and the following
+      columns) are sums over youth-level rows and, unlike num_youth, partition exactly across the race
+      axis and across the gender axis.
+    examples:
+    - 1024
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Offenses
+    - property: unit
+      value: count
+  - name: num_diversions
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Diversions of all types (informal adjustment, abeyance, diverted complaint withheld,
+      mediation, nolle prosequi).
+    examples:
+    - 96
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Diversions
+    - property: unit
+      value: count
+  - name: num_petitions
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Petitioned cases (formal court filings).
+    examples:
+    - 256
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Petitions
+    - property: unit
+      value: count
+  - name: num_delinquent_adjudications
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Delinquent adjudications, misdemeanor and felony combined (charge-level: one youth adjudicated
+      on three charges contributes 3).'
+    examples:
+    - 128
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Delinquent Adjudications
+    - property: unit
+      value: count
+  - name: num_adjudication_dates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Sum over youths of each youth's count of DISTINCT adjudication dates (a youth adjudicated
+      on three separate dates contributes 3; multiple charges adjudicated the same day contribute 1).
+      Can exceed num_delinquent_adjudications because the source's date count is not limited to misdemeanor/felony
+      delinquent adjudications.
+    examples:
+    - 100
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Adjudication Dates
+    - property: unit
+      value: count
+  - name: num_probation_orders
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Probation orders entered.
+    examples:
+    - 64
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Probation Orders
+    - property: unit
+      value: count
+  - name: num_commitment_orders
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Commitment orders entered (commitments to the Department of Juvenile Justice).
+    examples:
+    - 16
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Commitment Orders
+    - property: unit
+      value: count
+  - name: num_superior_court_sentences
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Cases sentenced in superior court (youths handled in the adult system, e.g. SB 440 offenses).
+    examples:
+    - 2
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Superior Court Sentences
+    - property: unit
+      value: count
+  - name: num_secure_detention_youth
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Distinct youths in the cell with a NEW secure detention (RYDC — Regional Youth Detention
+      Center) placement in the year, from the source''s 0/1 indicator. Likely INCOMPLETE for 2023-2025:
+      the source flags only 62/81/72 youth-rows statewide in those years vs roughly 200-500 in every earlier
+      year — treat recent-year secure-placement counts as a floor, not a total.'
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Secure Detention Youth
+    - property: unit
+      value: count
+  - name: num_secure_confinement_youth
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Distinct youths in the cell with a NEW secure confinement (YDC — Youth Development Campus)
+      placement in the year, from the source's 0/1 indicator (mutually exclusive with the RYDC indicator
+      per youth-row). Same 2023-2025 incompleteness caveat as num_secure_detention_youth.
+    examples:
+    - 3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Secure Confinement Youth
+    - property: unit
+      value: count
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 9 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian', 'black', 'female', 'hispanic', 'male', 'native_american', 'other', 'white')
+    mustBe: 0
+  - type: sql
+    name: num_youth_non_negative
+    description: num_youth is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_youth IS NOT NULL AND num_youth < 0
+    mustBe: 0
+  - type: sql
+    name: num_offenses_non_negative
+    description: num_offenses is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_offenses IS NOT NULL AND num_offenses < 0
+    mustBe: 0
+  - type: sql
+    name: num_diversions_non_negative
+    description: num_diversions is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_diversions IS NOT NULL AND num_diversions < 0
+    mustBe: 0
+  - type: sql
+    name: num_petitions_non_negative
+    description: num_petitions is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_petitions IS NOT NULL AND num_petitions < 0
+    mustBe: 0
+  - type: sql
+    name: num_delinquent_adjudications_non_negative
+    description: num_delinquent_adjudications is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_delinquent_adjudications IS NOT NULL AND num_delinquent_adjudications
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_adjudication_dates_non_negative
+    description: num_adjudication_dates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_adjudication_dates IS NOT NULL AND num_adjudication_dates
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_probation_orders_non_negative
+    description: num_probation_orders is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_probation_orders IS NOT NULL AND num_probation_orders
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_commitment_orders_non_negative
+    description: num_commitment_orders is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_commitment_orders IS NOT NULL AND num_commitment_orders
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_superior_court_sentences_non_negative
+    description: num_superior_court_sentences is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_superior_court_sentences IS NOT NULL AND num_superior_court_sentences
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_secure_detention_youth_non_negative
+    description: num_secure_detention_youth is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_secure_detention_youth IS NOT NULL AND num_secure_detention_youth
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_secure_confinement_youth_non_negative
+    description: num_secure_confinement_youth is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_secure_confinement_youth IS NOT NULL AND num_secure_confinement_youth
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_offenses_at_least_num_youth
+    description: Every youth-level source row carries at least one offense, so each cell's offense total
+      must be at least its distinct-youth count.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_youth IS NOT NULL AND num_offenses IS NOT NULL AND
+      num_offenses < num_youth
+    mustBe: 0
+  - type: sql
+    name: delinquent_adjudications_within_offenses
+    description: 'Delinquent adjudications cannot exceed offenses; holds row-wise in bronze (verified:
+      zero violations) and is preserved by summation.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_delinquent_adjudications IS NOT NULL AND num_offenses
+      IS NOT NULL AND num_delinquent_adjudications > num_offenses
+    mustBe: 0
+  - type: sql
+    name: petitions_within_offenses
+    description: 'Petitioned cases cannot exceed offenses; holds row-wise in bronze (verified: zero violations)
+      and is preserved by summation.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_petitions IS NOT NULL AND num_offenses IS NOT NULL
+      AND num_petitions > num_offenses
+    mustBe: 0
+  - type: sql
+    name: secure_placement_youth_within_num_youth
+    description: Youths with a new secure detention or confinement placement are a subset of the cell's
+      distinct youths (both flag counts are n_unique over the same youth set).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_secure_detention_youth > num_youth OR num_secure_confinement_youth
+      > num_youth
+    mustBe: 0
+  - type: sql
+    name: race_partition_num_offenses
+    description: 'Every youth-level row carries exactly one race value, so summed event counts partition
+      exactly across the race axis: per (year, county_fips) the six race rows'' num_offenses must sum
+      to the ''all'' row''s num_offenses. GROUP BY treats the NULL county_fips of state rows as one group,
+      so the invariant is enforced at both levels.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN demographic = 'all' THEN num_offenses
+      END) AS total, SUM(CASE WHEN demographic IN ('asian','black','hispanic','native_american','other','white')
+      THEN num_offenses END) AS race_sum FROM {object} GROUP BY year, county_fips) WHERE total IS NOT
+      NULL AND race_sum IS NOT NULL AND total != race_sum
+    mustBe: 0
+  - type: sql
+    name: gender_partition_num_offenses
+    description: Every youth-level row carries exactly one gender value, so per (year, county_fips) the
+      male + female rows' num_offenses must sum to the 'all' row's num_offenses.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN demographic = 'all' THEN num_offenses
+      END) AS total, SUM(CASE WHEN demographic IN ('female','male') THEN num_offenses END) AS gender_sum
+      FROM {object} GROUP BY year, county_fips) WHERE total IS NOT NULL AND gender_sum IS NOT NULL AND
+      total != gender_sum
+    mustBe: 0
+customProperties:
+- property: title
+  value: Juvenile Justice Decision Points
+- property: summary
+  value: Youths in Georgia's juvenile courts and key decision-point counts (offenses, diversions, petitions,
+    adjudications, commitments) by county, race, and gender, 2010-2025.
+- property: source
+  value: Georgia Juvenile Justice Data Clearinghouse
+- property: source_url
+  value: https://juveniledata.georgiacourts.gov/dashboards-reports/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2010-2025
+- property: schema_hash
+  value: 09e4b9320e0df5a0e33d73774ae2acbab749fde198422379ed9071101a93d642
+- property: available_years
+  value:
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

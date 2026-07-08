@@ -1,0 +1,410 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.out_of_home_placement
+name: out_of_home_placement
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'County-level counts of juvenile-court commitments to the Georgia Department of Juvenile Justice
+    (DJJ) and short-term program (STP) admissions, 2005-2025, from the Georgia Juvenile Justice Data Clearinghouse.
+    Five measures per county-year: all commitments, felony commitments, felony commitments resulting in
+    out-of-home placement (OHP), all STP admissions, and felony STP admissions. Felony commitments and
+    all STP admissions additionally carry four-way race splits (black / white / hispanic / other).'
+  usage: Star-schema fact table. Join the counties dimension on county_fips; the demographics dimension
+    on demographic. Read directly with DuckDB over Parquet.
+  limitations: 'County rows only — the source publishes no state rollup rows and none are synthesized.
+    Summing counties yields in-state totals only: the source''s OUT OF STATE pseudo-county rows (4-68
+    commitments per year, invalid county FIPS) are excluded from this dataset. The panel is sparse: a
+    county-year absent from the data means the county had no recorded activity that year (the source publishes
+    no all-zero rows), not missing data. Race splits exist only for felony_commitments and all_stp_admissions;
+    the other three measures are NULL on race rows. The source does not state whether PeriodYear is a
+    calendar or state fiscal year.'
+tags:
+- criminal_justice
+- georgia juvenile justice data clearinghouse
+- out_of_home_placement
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/out_of_home_placement/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/out_of_home_placement/**/*.parquet
+  format: parquet
+schema:
+- name: out_of_home_placement
+  logicalType: object
+  physicalType: parquet
+  physicalName: out_of_home_placement
+  description: out_of_home_placement fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, county_fips, demographic.
+  customProperties:
+  - property: sub_topic
+    value: juvenile_clearinghouse
+  - property: detail_levels
+    value:
+    - counties
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+  - property: key_metric
+    value: felony_commitments_ohp
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/out_of_home_placement/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), counties detail
+      query: SELECT * FROM out_of_home_placement WHERE year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Reporting period year as published in the source's PeriodYear column (2005-2025). The
+      source does not state whether the period is a calendar year or a state fiscal year; its definitions
+      page only says measures count events whose instance started during the reporting period.
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: '5-digit Georgia county FIPS code (FK to the counties dimension), published directly
+      by the source. Never NULL in this topic: there are no state rollup rows, and the source''s OUT OF
+      STATE pseudo-county rows (which carry an invalid FIPS) are excluded.'
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Youth race bucket (FK to demographics dimension): all, black, white, hispanic, other.
+      The source''s four race buckets are mutually exclusive and exhaustive (race sums equal the parent
+      totals in every row): hispanic is treated as a race-level bucket, and other absorbs Asian, Pacific
+      Islander, Native American, multiracial, and unknown youth. Race rows carry only felony_commitments
+      and all_stp_admissions; the other three measures are published only at demographic=''all''.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'black'
+    - 'hispanic'
+    - 'other'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Race of the youth: all (every youth), black, white, hispanic, or other.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: all_commitments
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'All juvenile-court commitments to DJJ: petitioned cases where, among all charges in
+      the case, the most serious outcome is a commitment to DJJ (unique cases). Published only at demographic=''all''
+      (NULL on race rows).'
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: All Commitments
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Not published for race rows — the source splits only felony commitments and STP admissions
+        by race. Populated on every demographic='all' row (the source has no suppression).
+  - name: felony_commitments
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Juvenile-court commitments to DJJ where the offense is a felony. The one measure (with
+      all_stp_admissions) split by race: race-row values sum exactly to the demographic=''all'' value
+      within each county-year.'
+    examples:
+    - 7
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Felony Commitments
+    - property: unit
+      value: count
+  - name: felony_commitments_ohp
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Felony commitments to DJJ resulting in out-of-home placement (OHP) — the topic's namesake
+      headline measure. A subset of felony_commitments. Published only at demographic='all' (NULL on race
+      rows).
+    examples:
+    - 5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Felony Commitments Ohp
+    - property: short_description
+      value: Felony commitments that resulted in the youth being placed out of the home (the topic's headline
+        measure).
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Not published for race rows — the source splits only felony commitments and STP admissions
+        by race. Populated on every demographic='all' row (the source has no suppression).
+    - property: key_metric
+      value: true
+  - name: all_stp_admissions
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'All short-term program (STP) admissions — youth placed in a Short Term Program, a form
+      of secure juvenile correctional confinement. The one measure (with felony_commitments) split by
+      race: race-row values sum exactly to the demographic=''all'' value within each county-year.'
+    examples:
+    - 14
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: All Stp Admissions
+    - property: unit
+      value: count
+  - name: felony_stp_admissions
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Short-term program admissions where the offense is a felony. A subset of all_stp_admissions.
+      Published only at demographic='all' (NULL on race rows).
+    examples:
+    - 6
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Felony Stp Admissions
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Not published for race rows — the source splits only felony commitments and STP admissions
+        by race. Populated on every demographic='all' row (the source has no suppression).
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 5 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'black', 'hispanic', 'other', 'white')
+    mustBe: 0
+  - type: sql
+    name: all_commitments_non_negative
+    description: all_commitments is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE all_commitments IS NOT NULL AND all_commitments < 0
+    mustBe: 0
+  - type: sql
+    name: felony_commitments_non_negative
+    description: felony_commitments is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE felony_commitments IS NOT NULL AND felony_commitments <
+      0
+    mustBe: 0
+  - type: sql
+    name: felony_commitments_ohp_non_negative
+    description: felony_commitments_ohp is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE felony_commitments_ohp IS NOT NULL AND felony_commitments_ohp
+      < 0
+    mustBe: 0
+  - type: sql
+    name: all_stp_admissions_non_negative
+    description: all_stp_admissions is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE all_stp_admissions IS NOT NULL AND all_stp_admissions <
+      0
+    mustBe: 0
+  - type: sql
+    name: felony_stp_admissions_non_negative
+    description: felony_stp_admissions is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE felony_stp_admissions IS NOT NULL AND felony_stp_admissions
+      < 0
+    mustBe: 0
+  - type: sql
+    name: felony_commitments_within_all_commitments
+    description: 'Felony commitments are a subset of all commitments: felony_commitments must not exceed
+      all_commitments (verified 0 violations in bronze). Both populated only at demographic=''all''; NULL-guarded.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE all_commitments IS NOT NULL AND felony_commitments IS NOT
+      NULL AND felony_commitments > all_commitments
+    mustBe: 0
+  - type: sql
+    name: ohp_within_felony_commitments
+    description: 'Out-of-home placements are a subset of felony commitments: felony_commitments_ohp must
+      not exceed felony_commitments (verified 0 violations in bronze).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE felony_commitments_ohp IS NOT NULL AND felony_commitments
+      IS NOT NULL AND felony_commitments_ohp > felony_commitments
+    mustBe: 0
+  - type: sql
+    name: felony_stp_within_all_stp_admissions
+    description: 'Felony STP admissions are a subset of all STP admissions: felony_stp_admissions must
+      not exceed all_stp_admissions (verified 0 violations in bronze).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE felony_stp_admissions IS NOT NULL AND all_stp_admissions
+      IS NOT NULL AND felony_stp_admissions > all_stp_admissions
+    mustBe: 0
+  - type: sql
+    name: race_felony_commitments_sum_to_total
+    description: 'The four race buckets are mutually exclusive and exhaustive: race-row felony_commitments
+      must sum exactly to the demographic=''all'' value within each county-year (verified 0 mismatches
+      in bronze).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN demographic = 'all' THEN felony_commitments
+      END) AS total, SUM(CASE WHEN demographic != 'all' THEN felony_commitments END) AS race_sum FROM
+      {object} GROUP BY year, county_fips) WHERE total IS NOT NULL AND race_sum IS NOT NULL AND total
+      != race_sum
+    mustBe: 0
+  - type: sql
+    name: race_stp_admissions_sum_to_total
+    description: Race-row all_stp_admissions must sum exactly to the demographic='all' value within each
+      county-year (verified 0 mismatches in bronze).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN demographic = 'all' THEN all_stp_admissions
+      END) AS total, SUM(CASE WHEN demographic != 'all' THEN all_stp_admissions END) AS race_sum FROM
+      {object} GROUP BY year, county_fips) WHERE total IS NOT NULL AND race_sum IS NOT NULL AND total
+      != race_sum
+    mustBe: 0
+  - type: sql
+    name: race_rows_unsplit_metrics_null
+    description: 'Structural: the source publishes all_commitments, felony_commitments_ohp, and felony_stp_admissions
+      only at demographic=''all'' — they must be NULL on race rows.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE demographic != 'all' AND (all_commitments IS NOT NULL OR
+      felony_commitments_ohp IS NOT NULL OR felony_stp_admissions IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: race_rows_split_metrics_populated
+    description: 'Structural: the two race-split measures are published for every race bucket in every
+      bronze row — race rows must carry non-NULL felony_commitments and all_stp_admissions.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE demographic != 'all' AND (felony_commitments IS NULL OR
+      all_stp_admissions IS NULL)
+    mustBe: 0
+  - type: sql
+    name: all_rows_fully_populated
+    description: 'Structural: the source has no suppression, so every demographic=''all'' row must carry
+      all five measures non-NULL.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE demographic = 'all' AND (all_commitments IS NULL OR felony_commitments
+      IS NULL OR felony_commitments_ohp IS NULL OR all_stp_admissions IS NULL OR felony_stp_admissions
+      IS NULL)
+    mustBe: 0
+customProperties:
+- property: title
+  value: Juvenile Commitments and Out-of-Home Placement
+- property: summary
+  value: Juvenile-court commitments to DJJ, felony commitments resulting in out-of-home placement, and
+    short-term program admissions by Georgia county and race, 2005-2025.
+- property: source
+  value: Georgia Juvenile Justice Data Clearinghouse
+- property: source_url
+  value: https://juveniledata.georgiacourts.gov/dashboards-reports/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2005-2025
+- property: schema_hash
+  value: a1589d9ae9e7de3e21c0b9fe09487172023a284780d9f892e5877f3a56d36b69
+- property: available_years
+  value:
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

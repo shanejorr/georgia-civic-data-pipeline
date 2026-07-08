@@ -1,0 +1,350 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.act_scores
+name: act_scores
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Average ACT scaled scores (1-36) and number of students tested for Georgia public schools,
+    with official district and state rollups, by ACT test component. Covers graduating-class ACT results
+    published by GOSA from 2004 through 2024.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code. 2010 caveat: the 2010 source''s district-total rows are internally
+    inconsistent with its own school rows (~30 districts'' published means fall outside the feasible range
+    implied by their school rows, in both directions; the 2010 state count is also an outlier vs adjacent
+    years); the reporting basis is unknown and the published rows are preserved unchanged — use 2010 district
+    aggregates with caution. 2016 writing_subscore is on a 1-36 scale (ACT''s ''enhanced writing'' window)
+    vs the 2-12 writing domain scale in every other year.'
+tags:
+- education
+- gosa
+- act_scores
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/act_scores/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/act_scores/**/*.parquet
+  format: parquet
+schema:
+- name: act_scores
+  logicalType: object
+  physicalType: parquet
+  physicalName: act_scores
+  description: act_scores fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, test_component (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - test_component
+  - property: key_metric
+    value: avg_score
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/act_scores/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM act_scores WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM act_scores WHERE district_code = '601' AND year = 2024 LIMIT 100
+    - description: Filter by test_component = composite
+      query: SELECT * FROM act_scores WHERE test_component = 'composite' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Reporting year. For 2011-2024 this is the spring (ending) calendar year of the school
+      year in the source's LONG_SCHOOL_YEAR; for 2004-2010 the source carries no year column and the filename
+      publication year is used.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit state-charter codes. NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). NULL on district- and state-level rows.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: test_component
+    logicalType: string
+    physicalType: string
+    required: true
+    description: ACT section. composite, english, mathematics, reading, and science are reported in all
+      years (2004-2010 label science as 'Science Reasoning'); writing_subscore appears from 2011 onward;
+      combined_english_writing only in 2011-2015 (students who took both English and the optional Writing
+      section).
+    examples:
+    - 'composite'
+    enum:
+    - 'combined_english_writing'
+    - 'composite'
+    - 'english'
+    - 'mathematics'
+    - 'reading'
+    - 'science'
+    - 'writing_subscore'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Test Component
+    - property: short_description
+      value: 'Which ACT section the score covers: composite (overall), english, mathematics, reading,
+        science, or writing.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_tested
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students tested. 2004-2010 sources publish one count per school/district/state
+      entity, which is repeated on each of that entity's five test_component rows; 2011-2024 sources publish
+      true per-component counts. In either case, summing num_tested across test_component double-counts
+      students — filter to one component (typically composite) for headcounts.
+    examples:
+    - 24
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (too few students to report; TFS marker in 2011-2024 sources).
+    - property: metric_component
+      value: denominator
+  - name: avg_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Average ACT scaled score. The 1-36 ACT scale applies to every test_component except
+      writing_subscore, which the source reports on the ACT writing domain 2-12 scale (typical statewide
+      averages 6-7) in every year EXCEPT 2016: ACT''s September 2015-June 2016 ''enhanced writing'' window
+      reported writing on a 1-36 scale, so 2016 writing_subscore values run 11.8-23.1 (mean ~17.2) vs
+      4.2-8.5 in all other years — do not read 2016 as a writing-performance jump in time series. The
+      [1, 36] range check below bounds all components and years. NULL when GOSA suppressed the value (too
+      few test-takers). Known source defects NULLed by the transform per data-cleaning-standards §4b (rows
+      and num_tested preserved): (a) the 2006 publication reported 10 impossible values of 36.9-41.5 (above
+      the ACT scale maximum of 36) across the five sections for Campbell High School (district 633, school
+      1054) and Cedar Grove High School (district 644, school 0172) — any avg_score outside [1, 36] is
+      NULLed; (b) the 2009 Atlanta City district rows (district 761) published scores of 34.2-35.5 while
+      the district''s own school rows bound every section at or below 17.7 — the five district avg_score
+      values are NULLed (num_tested 949 is consistent with the school rows and preserved). This revises
+      the preserve-bronze default for this column; the 1-36 range check below remains enforceable because
+      of it.'
+    examples:
+    - 18.1
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Score
+    - property: short_description
+      value: Average ACT scaled score on the 1-36 scale (writing subscore uses a 2-12 scale, except 2016);
+        higher is better.
+    - property: unit
+      value: score
+    - property: value_min
+      value: 1
+    - property: value_max
+      value: 36
+    - property: null_meaning
+      value: Suppressed by GOSA (too few test-takers), or one of 15 impossible source values (10 in 2006,
+        5 in 2009) NULLed by the transform.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: test_component_in_allowed_values
+    description: test_component is one of the 7 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE test_component IS NOT NULL AND test_component NOT IN ('combined_english_writing',
+      'composite', 'english', 'mathematics', 'reading', 'science', 'writing_subscore')
+    mustBe: 0
+  - type: sql
+    name: num_tested_non_negative
+    description: num_tested is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested < 0
+    mustBe: 0
+  - type: sql
+    name: avg_score_within_range
+    description: avg_score is within its declared [1, 36] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_score IS NOT NULL AND (avg_score < 1 OR avg_score >
+      36)
+    mustBe: 0
+  - type: sql
+    name: avg_score_requires_positive_num_tested
+    description: 'A published average score implies at least one reported test-taker: avg_score must not
+      be non-NULL while num_tested is NULL or < 1. Holds in every era (counts are published even for suppressed-score
+      rows).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE avg_score IS NOT NULL AND (num_tested IS NULL OR num_tested
+      < 1)
+    mustBe: 0
+  - type: sql
+    name: state_rows_never_suppressed
+    description: 'GOSA publishes unsuppressed statewide aggregates in every era: state-level rows (district_code
+      and school_code both NULL) must carry non-NULL num_tested and avg_score.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL AND school_code IS NULL AND (num_tested
+      IS NULL OR avg_score IS NULL)
+    mustBe: 0
+  - type: sql
+    name: combined_english_writing_year_range
+    description: The combined_english_writing component exists only in the 2011-2015 source files (dropped
+      from 2016 onward, absent before 2011).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE test_component = 'combined_english_writing' AND (year <
+      2011 OR year > 2015)
+    mustBe: 0
+  - type: sql
+    name: writing_subscore_year_range
+    description: The writing_subscore component first appears in the 2011 source files; 2004-2010 bronze
+      has no writing column.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE test_component = 'writing_subscore' AND year < 2011
+    mustBe: 0
+  - type: sql
+    name: writing_subscore_scale_outside_2016
+    description: writing_subscore is on the ACT writing domain 2-12 scale in every year except 2016 (the
+      1-36 'enhanced writing' window); outside 2016 no average may exceed 12. Catches future scale or
+      column-swap errors.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE test_component = 'writing_subscore' AND year != 2016 AND
+      avg_score > 12
+    mustBe: 0
+customProperties:
+- property: title
+  value: ACT College Readiness Test Scores
+- property: summary
+  value: Average ACT college-admissions test scores and number of students tested, by Georgia school,
+    district, and ACT section, 2004-2024.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2004-2024
+- property: schema_hash
+  value: 066aaae84c463e97cd65c1d94af2de8c7731ddbca060c1fd1c52acae38431bd1
+- property: available_years
+  value:
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

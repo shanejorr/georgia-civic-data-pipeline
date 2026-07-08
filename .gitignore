@@ -1,0 +1,100 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# The web/ Next.js app keeps shared modules in src/lib/ — the Python `lib/` rule
+# above must not ignore the web app's source (re-include the directory so git
+# recurses into it; its contents are not matched by any Python pattern).
+!web/src/lib/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code per-machine settings (personal paths / local permission allowlist;
+# settings.json stays tracked, settings.local.json is per-user)
+.claude/settings.local.json
+*~
+
+# Cursor (generated from CLAUDE.md by scripts/sync_cursor_rules.py)
+.cursor/rules/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Local data directories (raw and processed data).
+# Ignore file contents with `**` (not the directory itself) — git does not
+# recurse into ignored directories to evaluate negations, so ignoring
+# `data/bronze/` would prevent the `!*.md` / `!*.py` exceptions from matching.
+data/bronze/**
+data/gold/**
+
+# Re-include subdirectories so git traverses them, plus markdown and python files.
+!data/bronze/**/
+!data/gold/**/
+!data/bronze/**/*.md
+!data/bronze/**/*.py
+!data/gold/**/*.md
+!data/gold/**/*.py
+
+# Jupyter
+.ipynb_checkpoints/
+
+# AWS/Infrastructure
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+cdk.out/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# mypy
+.mypy_cache/
+
+# ruff
+.ruff_cache/
+
+# Playwright / browser-tool scratch dirs
+.playwright-cli/
+.playwright-mcp/

@@ -1,0 +1,401 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.revenues_and_expenditures
+name: revenues_and_expenditures
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'K-12 financial reporting for every Georgia public school, school district, and the state as
+    a whole, published by the Governor''s Office of Student Achievement (GOSA). Each row reports the total
+    dollar amount and the per-FTE dollar amount for one cell of a two-bucket breakdown: K-12 Revenues
+    across 6 revenue-source categories (federal, local, state QBE, state lottery, state other, other)
+    and K-12 Expenditures across 11 expenditure-function categories (instruction, pupil services, instructional
+    support, school administration, general administration, maintenance and operations, transportation,
+    media, school food services, debt services, renovation and capital projects). Covers school years
+    2010-11 through 2023-24.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'State rows have NULL district_code and school_code; district rows have NULL school_code.
+    The school detail level includes non-traditional entities (central offices, GNETS programs, Pre-K
+    centers, maintenance facilities) in every year, and district detail includes the 16 RESA service-agency
+    rollups (district codes 850-888) — exclude both when analyzing traditional schools/districts only.
+    rev_exp_per_pupil is not a true per-pupil amount everywhere: the 2024 file publishes it equal to rev_exp_value
+    on every school-detail row (traditional schools included — 2024 school-level per-FTE values are totals,
+    not per-pupil amounts), the 2023 file does so on all DOE OTHER rows, the 2012 file on its 10,414 missing-FTE
+    rows, and it frequently equals rev_exp_value on aggregate / non-school rows in other years. State
+    rows are published independently of district rows and do not always equal the sum of district values
+    within a subcategory (e.g. the 2014 renovation_and_capital_projects state total runs several times
+    the district sum) — treat each detail level as its own published series. The valid rev_exp_subcategory
+    values are disjoint between the two rev_exp_category buckets (6 revenue-source vs 11 expenditure-function
+    subcategories). No suppression exists in this topic — NULL never means suppressed; the only NULL metric
+    values are 667 rev_exp_per_pupil rows in 2012-2014 with a missing/zero FTE denominator. Negative dollar
+    values are legitimate budget adjustments and are preserved.'
+tags:
+- education
+- governor's office of student achievement
+- revenues_and_expenditures
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/revenues_and_expenditures/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/revenues_and_expenditures/**/*.parquet
+  format: parquet
+schema:
+- name: revenues_and_expenditures
+  logicalType: object
+  physicalType: parquet
+  physicalName: revenues_and_expenditures
+  description: revenues_and_expenditures fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code, rev_exp_category, rev_exp_subcategory
+    (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - rev_exp_category
+    - rev_exp_subcategory
+  - property: key_metric
+    value: rev_exp_value
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/revenues_and_expenditures/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM revenues_and_expenditures WHERE year = 2024 LIMIT 100
+    - description: District 644 in 2024
+      query: SELECT * FROM revenues_and_expenditures WHERE district_code = '644' AND year = 2024 LIMIT
+        100
+    - description: Filter by rev_exp_category = k12_expenditures
+      query: SELECT * FROM revenues_and_expenditures WHERE rev_exp_category = 'k12_expenditures' AND year
+        = 2024 LIMIT 100
+  - property: dependent_filter
+    value:
+    - primary: rev_exp_category
+      dependent: rev_exp_subcategory
+      note: Filter rev_exp_subcategory together with rev_exp_category — the valid subcategory set depends
+        on the chosen bucket (6 revenue-source vs 11 expenditure-function values).
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending (spring) calendar year of the school year (e.g. 2024 for 2023-24), parsed from
+      the source's SCHOOL_YEAR / LONG_SCHOOL_YEAR column and cross-checked against the filename year.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit compound codes for commission / state charter schools. Codes 850-888 are RESA service
+      agencies (typed ''resa'' in the dimension). NULL on state-level rows — the bronze sentinel ''ALL''
+      is mapped to NULL.'
+    examples:
+    - '644'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit zero-padded GOSA school code (composite FK to schools dimension with district_code).
+      NULL on district- and state-level rows (bronze sentinel 'ALL' mapped to NULL). The 2012 file publishes
+      a minority of codes as 3-digit; they are zero-padded to match the other years. 2023-2024 'DOE OTHER'
+      rows (GNETS programs, alternative schools, Pre-K centers, central offices) carry real institution
+      numbers and appear under the school detail level, matching where the pre-2023 files placed the same
+      entities.
+    examples:
+    - '0189'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: rev_exp_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Top-level bucket — whether the row reports a revenue or an expenditure: k12_revenues
+      or k12_expenditures.'
+    examples:
+    - 'k12_expenditures'
+    enum:
+    - 'k12_expenditures'
+    - 'k12_revenues'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Revenue / Expenditure Category
+    - property: short_description
+      value: 'Whether the row is money coming in or going out: k12_revenues or k12_expenditures. Filter
+        with rev_exp_subcategory since each bucket has its own subcategory set.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: rev_exp_subcategory
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Functional subcategory within the bucket (17 values). The valid subset depends on rev_exp_category:
+      revenue rows carry only the 6 revenue-source subcategories (federal, local, state_qbe, state_lottery,
+      state_other, other); expenditure rows carry only the 11 expenditure-function subcategories. The
+      two sets are disjoint (enforced by a quality check), so filter on both columns together. The bronze
+      spelling ''School food Services'' (lowercase food) is an upstream-report typo normalized to school_food_services.'
+    examples:
+    - 'instruction'
+    enum:
+    - 'debt_services'
+    - 'federal'
+    - 'general_administration'
+    - 'instruction'
+    - 'instructional_support'
+    - 'local'
+    - 'maintenance_and_operations'
+    - 'media'
+    - 'other'
+    - 'pupil_services'
+    - 'renovation_and_capital_projects'
+    - 'school_administration'
+    - 'school_food_services'
+    - 'state_lottery'
+    - 'state_other'
+    - 'state_qbe'
+    - 'transportation'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Rev Exp Subcategory
+    - property: short_description
+      value: Revenue source (e.g. federal, local, state_qbe) or spending function (e.g. instruction, transportation);
+        the valid set depends on rev_exp_category.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: rev_exp_value
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Total dollar amount for this (rev_exp_category, rev_exp_subcategory) cell at the row's
+      detail level. Never NULL (enforced by a quality check — the source publishes no suppression). Negative
+      values are legitimate budget adjustments / corrections and are preserved; no range check applies.
+    examples:
+    - 3960000.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Rev Exp Value
+    - property: short_description
+      value: Total dollars for this revenue source or spending function at the row's level; negatives
+        are real budget adjustments.
+    - property: unit
+      value: currency
+    - property: key_metric
+      value: true
+  - name: rev_exp_per_pupil
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Per-FTE (full-time-equivalent student) dollar amount for the cell. Can be negative (budget
+      adjustments). NULL only in 2012-2014 where the bronze FTE denominator was missing or zero (667 rows;
+      enforced by a quality check). Caution — not always a true per-pupil amount: in the 2024 file the
+      source publishes rev_exp_per_pupil equal to rev_exp_value verbatim on EVERY school-detail row (15,678
+      of 15,678 nonzero rows, traditional schools included), so 2024 school-level values carry no per-pupil
+      information at all; in 2023 the same artifact covers all 9,798 DOE OTHER specialty-program rows
+      plus 151 other school rows; in 2012 it covers the 10,414 rows with a missing FTE_COUNT; and it frequently
+      equals rev_exp_value on aggregate / non-school rows in other years. District- and state-detail rows
+      in 2023-2024 do carry true per-FTE values. Verify rev_exp_per_pupil <> rev_exp_value (or sanity-check
+      per-pupil magnitude) before treating a school-level value as per-pupil spending.'
+    examples:
+    - 6696.37
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Rev Exp per Pupil
+    - property: unit
+      value: currency
+    - property: null_meaning
+      value: NULL = the entity has no FTE denominator (district central offices, zero-FTE programs), NOT
+        suppression. All 667 NULLs fall in 2012-2014, the only years whose bronze carried an FTE_COUNT
+        column.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: rev_exp_category_in_allowed_values
+    description: rev_exp_category is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE rev_exp_category IS NOT NULL AND rev_exp_category NOT IN
+      ('k12_expenditures', 'k12_revenues')
+    mustBe: 0
+  - type: sql
+    name: rev_exp_subcategory_in_allowed_values
+    description: rev_exp_subcategory is one of the 17 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE rev_exp_subcategory IS NOT NULL AND rev_exp_subcategory
+      NOT IN ('debt_services', 'federal', 'general_administration', 'instruction', 'instructional_support',
+      'local', 'maintenance_and_operations', 'media', 'other', 'pupil_services', 'renovation_and_capital_projects',
+      'school_administration', 'school_food_services', 'state_lottery', 'state_other', 'state_qbe', 'transportation')
+    mustBe: 0
+  - type: sql
+    name: rev_exp_category_subcategory_pairs_valid
+    description: 'Each (rev_exp_category, rev_exp_subcategory) pair stays within its bucket''s allowed
+      set: revenue rows carry only the 6 revenue-source subcategories and expenditure rows only the 11
+      expenditure-function subcategories. The two sets are disjoint and identical in every year (verified
+      across all 14 bronze files).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (rev_exp_category = 'k12_revenues' AND rev_exp_subcategory
+      NOT IN ('federal', 'local', 'other', 'state_lottery', 'state_other', 'state_qbe')) OR (rev_exp_category
+      = 'k12_expenditures' AND rev_exp_subcategory NOT IN ('debt_services', 'general_administration',
+      'instruction', 'instructional_support', 'maintenance_and_operations', 'media', 'pupil_services',
+      'renovation_and_capital_projects', 'school_administration', 'school_food_services', 'transportation'))
+    mustBe: 0
+  - type: sql
+    name: rev_exp_value_never_null
+    description: 'The source publishes no suppression and no missing dollar amounts: rev_exp_value is
+      populated on every row of all 14 bronze files (verified). A NULL means a parsing regression or a
+      new suppression regime — either must be analyzed, not silently passed.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE rev_exp_value IS NULL
+    mustBe: 0
+  - type: sql
+    name: rev_exp_per_pupil_null_only_in_2012_2014
+    description: 'rev_exp_per_pupil NULLs are confined to 2012-2014 — the only years whose bronze carried
+      an FTE_COUNT column (667 rows with a missing/zero FTE denominator: 13 in 2012, 382 in 2013, 272
+      in 2014). Every other year is fully populated (verified). A NULL elsewhere means a parsing regression
+      or a source change.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE rev_exp_per_pupil IS NULL AND year NOT IN (2012, 2013,
+      2014)
+    mustBe: 0
+  - type: sql
+    name: state_rows_complete_every_year
+    description: Every year publishes exactly 17 state rows — one per (rev_exp_category, rev_exp_subcategory)
+      pair, covering all 17 pairs (verified across all 14 bronze files). State rows self-scope via NULL
+      geography keys.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL GROUP BY year HAVING COUNT(*) <> 17 OR COUNT(DISTINCT rev_exp_category || '|' || rev_exp_subcategory)
+      <> 17) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: district_entities_carry_all_17_pairs
+    description: Every district-detail entity (districts, RESA rollups, charters) carries exactly 17 rows
+      covering all 17 (rev_exp_category, rev_exp_subcategory) pairs in every year it appears (verified
+      across all 14 bronze files). School-detail entities do NOT share this property (some publish partial
+      subcategory sets), so the check scopes to district rows via geography NULL-ness.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, district_code FROM {object} WHERE district_code IS NOT NULL
+      AND school_code IS NULL GROUP BY year, district_code HAVING COUNT(*) <> 17 OR COUNT(DISTINCT rev_exp_category
+      || '|' || rev_exp_subcategory) <> 17) AS bad_entities
+    mustBe: 0
+customProperties:
+- property: title
+  value: District Revenues and Expenditures
+- property: summary
+  value: K-12 dollars taken in and spent by Georgia public schools and districts, broken out by revenue
+    source and spending function, 2011-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2011-2024
+- property: schema_hash
+  value: e307e2e5704bc334eb4ea73998016877409f0eef2984325550d8c5cc7186156d
+- property: available_years
+  value:
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

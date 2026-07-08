@@ -1,0 +1,418 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.district_sentences
+name: district_sentences
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Individuals sentenced in Georgia''s three federal judicial districts (Northern, Middle, Southern),
+    by federal fiscal year and gender, aggregated from the US Sentencing Commission''s national individual-offender
+    datafiles (one record per person sentenced under the federal Sentencing Reform Act), FY2002-FY2025.
+    Each row carries the count of sentenced individuals plus the average and median prison sentence in
+    months (USSC SENTTOT: prison time only — probation-only sentences are excluded from the length statistics,
+    life sentences carry the Commission''s 470-month code, and determinate sentences longer than 470 months
+    are capped at 469.99 to match the Commission''s SENTTCAP length-of-imprisonment methodology uniformly
+    across all years). The federal-district grain is sub-state and does not map to counties; the year
+    is the FEDERAL FISCAL YEAR (October 1 - September 30, ending in the stated year).'
+  usage: Cite the US Sentencing Commission's individual offender datafiles. year is the FEDERAL FISCAL
+    YEAR (Oct-Sep). Counts are sentenced individuals, never case filings — do not reconcile against court-caseload
+    statistics. Sum offenders_sentenced across districts freely, but within one demographic category only
+    (male + female <= all). Never average avg_sentence_months across rows without weighting by num_with_prison_sentence.
+    Sentence-length statistics describe prison sentences only (probation-only sentences excluded) with
+    life counted as 470 months and determinate sentences longer than 470 months capped at 469.99 (Commission
+    SENTTCAP convention).
+  limitations: 'The grain is the federal judicial district (sub-state court geography): rows do not join
+    the counties dimension and there is no county_fips column. year is the federal fiscal year (Oct 1
+    - Sep 30). The platform''s year floor is 2000; this series begins at FY2002, the earliest zip published
+    in the source''s consistently-coded public datafile era. Sentence length uses USSC SENTTOT with the
+    SENTTCAP cap (life = 470, determinate sentences over 470 months capped at 469.99, Commission convention),
+    so a district-year''s mean is insensitive to the exact length of extreme sentences; from FY2018 time-served-only
+    sentences enter as 0.03 months rather than missing (source methodology refinement, small effect).
+    Individuals with unreported gender (roughly 0-6% by year) and the FY2024+ Other gender code appear
+    in the all rows only, so male + female can fall slightly short of all. Departure/variance rates, offense-type,
+    drug-type, race, age, and citizenship breakdowns are deliberately not served: the USSC recoded departure/variance
+    and offense-categorization variables at FY2018 (a methodology break that must be versioned, not pooled)
+    and the public race recode conflates all non-White/Black/Hispanic groups into Other. The source publishes
+    complete unsuppressed microdata; NULL appears only in the sentence-length statistics of a group with
+    no prison sentences.'
+tags:
+- criminal_justice
+- us sentencing commission, individual offender datafiles
+- district_sentences
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/district_sentences/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/district_sentences/**/*.parquet
+  format: parquet
+schema:
+- name: district_sentences
+  logicalType: object
+  physicalType: parquet
+  physicalName: district_sentences
+  description: district_sentences fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, federal_district, demographic.
+  customProperties:
+  - property: sub_topic
+    value: federal_justice
+  - property: detail_levels
+    value:
+    - federal_districts
+  - property: default_detail
+    value: federal_districts
+  - property: grain
+    value:
+    - year
+    - federal_district
+    - demographic
+  - property: key_metric
+    value: offenders_sentenced
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/district_sentences/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), federal_districts detail
+      query: SELECT * FROM district_sentences WHERE year = 2025 LIMIT 100
+    - description: Filter by federal_district = georgia_northern
+      query: SELECT * FROM district_sentences WHERE federal_district = 'georgia_northern' AND year = 2025
+        LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: FEDERAL FISCAL YEAR of sentencing (October 1 of the prior calendar year through September
+      30 of this year), not a calendar year. FY2002 is the earliest served year (the platform serves 2000
+      forward; this source's earliest consistently-coded public datafile era begins at FY2002).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: federal_district
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Federal judicial district in which the individual was sentenced (USSC DISTRICT codes
+      32 = Northern District of Georgia, 33 = Middle, 34 = Southern). This is a sub-state FEDERAL COURT
+      geography, not a county geography — districts span many counties and do not join the counties dimension.
+    examples:
+    - 'georgia_northern'
+    enum:
+    - 'georgia_middle'
+    - 'georgia_northern'
+    - 'georgia_southern'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Federal District
+    - property: short_description
+      value: Georgia federal judicial district where the individual was sentenced (georgia_northern, georgia_middle,
+        georgia_southern).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Gender demographic of the sentenced individuals (USSC MONSEX): male and female rows
+      are mutually exclusive; the all row is the unfiltered total. Individuals with unreported gender
+      (roughly 0-6% depending on year) and the small number coded Other (a MONSEX code added in FY2024;
+      no Georgia rows yet) are included in the all row only, so male + female can fall slightly short
+      of all. No race breakdown is served: the USSC public race recode (NEWRACE) collapses to White/Black/Hispanic/Other
+      and cannot be expressed in the platform''s mutually exclusive race vocabulary.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'female'
+    - 'male'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Gender of the sentenced individual (male / female), plus the all total.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: offenders_sentenced
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Number of individuals sentenced under the federal Sentencing Reform Act in the district
+      and fiscal year for the demographic group (one bronze record per sentenced individual; USSC counts
+      sentenced individuals, not case filings or terminations). Additive across the three districts; within
+      a district-year, sum only within one demographic category (male + female <= all; the difference
+      is individuals with unreported or Other gender).
+    examples:
+    - 477
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Offenders Sentenced
+    - property: short_description
+      value: Individuals sentenced in the district, fiscal year, and demographic group.
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: num_with_prison_sentence
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Number of sentenced individuals in the group whose sentence included a reported prison
+      term (USSC SENTTOT non-missing). Probation-only sentences, fine-only sentences, and the rare records
+      whose prison term could not be determined are excluded — this is the exact denominator of avg_sentence_months
+      and median_sentence_months. From FY2018 the USSC reports time-served-only sentences as 0.03 months
+      instead of missing, which slightly widens this count from FY2018 onward.
+    examples:
+    - 430
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number with Prison Sentence
+    - property: short_description
+      value: Individuals in the group whose sentence included reported prison time — the denominator of
+        the sentence-length statistics.
+    - property: unit
+      value: count
+  - name: avg_sentence_months
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Mean prison-sentence length in months among individuals whose sentence included reported
+      prison time (denominator: num_with_prison_sentence). Follows the Commission''s length-of-imprisonment
+      methodology (SENTTCAP): life sentences carry the 470-month code and determinate sentences longer
+      than 470 months are capped at 469.99, uniformly across all years; probation-only sentences are excluded
+      entirely; alternative confinement (home/community detention) months are not counted. Months, not
+      a 0-1 rate — no unit class applies, so the [0.01, 470] range is enforced by an authored quality
+      check. From FY2018, time-served-only sentences enter as 0.03 months (previously excluded as missing),
+      a small downward nudge documented by the source.'
+    examples:
+    - 78.42
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Sentence Months
+    - property: short_description
+      value: Mean prison sentence in months among those receiving prison time (life counted as 470 months;
+        determinate sentences capped at 469.99).
+    - property: null_meaning
+      value: NULL only when no individual in the group had a reported prison term (num_with_prison_sentence
+        = 0).
+  - name: median_sentence_months
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Median prison-sentence length in months among individuals whose sentence included reported
+      prison time (same population, capping, and caveats as avg_sentence_months; linear interpolation
+      between the two middle values for even counts). More robust than the mean to the handful of very
+      long or life (470) sentences in a district-year.
+    examples:
+    - 60.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Median Sentence Months
+    - property: short_description
+      value: Median prison sentence in months among those receiving prison time (life counted as 470 months).
+    - property: null_meaning
+      value: NULL only when no individual in the group had a reported prison term (num_with_prison_sentence
+        = 0).
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: federal_district_in_allowed_values
+    description: federal_district is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE federal_district IS NOT NULL AND federal_district NOT IN
+      ('georgia_middle', 'georgia_northern', 'georgia_southern')
+    mustBe: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'female', 'male')
+    mustBe: 0
+  - type: sql
+    name: offenders_sentenced_non_negative
+    description: offenders_sentenced is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE offenders_sentenced IS NOT NULL AND offenders_sentenced
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_with_prison_sentence_non_negative
+    description: num_with_prison_sentence is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_with_prison_sentence IS NOT NULL AND num_with_prison_sentence
+      < 0
+    mustBe: 0
+  - type: sql
+    name: no_pre_2000_years
+    description: 'Platform year floor: every served row is fiscal year 2000 or later (the source series
+      here starts at FY2002).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year < 2000
+    mustBe: 0
+  - type: sql
+    name: offenders_sentenced_at_least_one
+    description: Rows exist only for groups with at least one sentenced individual — a zero or NULL count
+      means the aggregation broke.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE offenders_sentenced IS NULL OR offenders_sentenced < 1
+    mustBe: 0
+  - type: sql
+    name: gender_counts_within_all_total
+    description: 'Gender rows are mutually exclusive subsets of the all row: male + female offenders_sentenced
+      must not exceed the all total for any district-year (individuals with unreported/Other gender make
+      the inequality strict).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, federal_district, MAX(CASE WHEN demographic = 'all' THEN
+      offenders_sentenced END) AS all_cnt, SUM(CASE WHEN demographic IN ('male', 'female') THEN offenders_sentenced
+      END) AS gender_sum FROM {object} GROUP BY year, federal_district) WHERE gender_sum IS NOT NULL AND
+      (all_cnt IS NULL OR gender_sum > all_cnt)
+    mustBe: 0
+  - type: sql
+    name: all_row_present_per_district_year
+    description: Every (year, federal_district) group carries its demographic='all' total row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, federal_district, MAX(CASE WHEN demographic = 'all' THEN
+      1 ELSE 0 END) AS has_all FROM {object} GROUP BY year, federal_district) WHERE has_all = 0
+    mustBe: 0
+  - type: sql
+    name: three_districts_every_year
+    description: Georgia has exactly three federal judicial districts and each sentences hundreds of individuals
+      every fiscal year — a year with fewer district values means a lost file or broken filter.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, COUNT(DISTINCT federal_district) AS nd FROM {object} GROUP
+      BY year) WHERE nd != 3
+    mustBe: 0
+  - type: sql
+    name: prison_sentence_count_within_offenders
+    description: 'The sentence-length denominator is a subset of the group: 0 <= num_with_prison_sentence
+      <= offenders_sentenced on every row.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_with_prison_sentence IS NULL OR num_with_prison_sentence
+      < 0 OR num_with_prison_sentence > offenders_sentenced
+    mustBe: 0
+  - type: sql
+    name: sentence_stats_co_null_with_denominator
+    description: avg/median sentence months are NULL exactly when the group has no reported prison sentences
+      (num_with_prison_sentence = 0), and present otherwise.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (num_with_prison_sentence = 0 AND (avg_sentence_months
+      IS NOT NULL OR median_sentence_months IS NOT NULL)) OR (num_with_prison_sentence > 0 AND (avg_sentence_months
+      IS NULL OR median_sentence_months IS NULL))
+    mustBe: 0
+  - type: sql
+    name: avg_sentence_months_within_cap
+    description: 'Mean sentence months lies in (0, 470]: SENTTOT''s floor is 0.01, determinate sentences
+      over 470 months are capped at 469.99, and 470 is the life code (SENTTCAP convention), so any value
+      outside the range means the masking/capping regressed. Authored because months have no unit class.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_sentence_months IS NOT NULL AND (avg_sentence_months
+      <= 0 OR avg_sentence_months > 470)
+    mustBe: 0
+  - type: sql
+    name: median_sentence_months_within_cap
+    description: Median sentence months lies in (0, 470] (same bounds and rationale as avg_sentence_months).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE median_sentence_months IS NOT NULL AND (median_sentence_months
+      <= 0 OR median_sentence_months > 470)
+    mustBe: 0
+customProperties:
+- property: title
+  value: Federal Court Sentences by Georgia District
+- property: summary
+  value: Individuals sentenced in Georgia's three federal judicial districts, with average and median
+    prison-sentence months, by federal fiscal year and gender, FY2002 onward (US Sentencing Commission).
+- property: source
+  value: US Sentencing Commission, Individual Offender Datafiles (Standardized Research Data, opafy{YY}nid),
+    FY2002-FY2025
+- property: source_url
+  value: https://www.ussc.gov/research/datafiles/commission-datafiles
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2002-2025
+- property: schema_hash
+  value: 24fbba0810374a4bc42f3cd3f23cca0ef607d08d14188a2edac3bca6995caa2c
+- property: available_years
+  value:
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

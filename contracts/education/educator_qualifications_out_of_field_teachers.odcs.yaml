@@ -1,0 +1,419 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.educator_qualifications_out_of_field_teachers
+name: educator_qualifications_out_of_field_teachers
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Georgia Office of Student Achievement (GOSA) Out-of-Field teacher FTE report. For every Georgia
+    public school, school district, and the state as a whole, reports the total teacher full-time equivalent
+    (`total_fte`), the FTE of teachers assigned to a subject for which they are not certified (`out_of_field_fte`),
+    and the out-of-field FTE as a percentage of total FTE (`out_of_field_fte_rate`, on a 0-1 decimal scale).
+    Each entity has three rows — Total, High Poverty, and Low Poverty — reporting the same three metrics
+    across poverty strata of schools. Coverage spans the 2017-2018 school year through 2023-2024.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'Cross-topic lineage caveat: the sibling emergency-credentials topic''s 2018-2021 bronze
+    files re-use the column headers OUTOFFIELD_FTE / OUTOFFIELD_FTE_PCT for Emergency-credential values
+    (its 2021 state total is 9,796.9). THIS topic''s bronze is the genuine out-of-field report (2021 state
+    total 6,281.9) — do not reconcile the two by column name. Suppression is era-asymmetric: 2018-2021
+    files contain no TFS markers at all, while 2022 onward suppress values below 10 with TFS (treat NULL
+    as ''value < 10'' for 2022+; NULL does not occur before 2022). KNOWN ANOMALY: 2018-2021 out_of_field_fte
+    carries implausibly many literal zeros (48% of 2020 school rows) that almost certainly encode suppression
+    as 0; all zeros are preserved per bronze fidelity and consumers must handle 2018-2021 zeros explicitly.
+    The FTE denominator has scope shifts: the 2019 file reports a ~37% broader teacher population at every
+    detail level, and the 2018 file mixes scopes ACROSS levels (school rows broad — statewide school-row
+    total_fte sums to 157,557.3 — while district and state rows are narrow, state row 118,009.1), so 2018
+    school rows do NOT sum to their district or state aggregates. The source publishes only district/school
+    NAMES, so codes are resolved by name against the education dimensions via the shared educator-topic
+    resolver (year-aware certified_personnel lookups, curated code pins, guarded matching); rows that
+    cannot be resolved are dropped only under documented predicates — redundant 2023 truncated charter-container
+    aggregates and cataloged source gaps — with per-year counts in the transform manifest. State rows
+    have NULL district_code and school_code; district rows have NULL school_code.'
+tags:
+- education
+- governor's office of student achievement
+- educator_qualifications_out_of_field_teachers
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/educator_qualifications_out_of_field_teachers/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/educator_qualifications_out_of_field_teachers/**/*.parquet
+  format: parquet
+schema:
+- name: educator_qualifications_out_of_field_teachers
+  logicalType: object
+  physicalType: parquet
+  physicalName: educator_qualifications_out_of_field_teachers
+  description: educator_qualifications_out_of_field_teachers fact table, year-partitioned Parquet (split
+    by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, poverty_subgroup (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - poverty_subgroup
+  - property: key_metric
+    value: out_of_field_fte_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/educator_qualifications_out_of_field_teachers/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM educator_qualifications_out_of_field_teachers WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM educator_qualifications_out_of_field_teachers WHERE district_code = '601' AND
+        year = 2024 LIMIT 100
+    - description: Filter by poverty_subgroup = total
+      query: SELECT * FROM educator_qualifications_out_of_field_teachers WHERE poverty_subgroup = 'total'
+        AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year. Year 2024 = 2023-2024 school year. Derived from
+      the bronze `LONG_SCHOOL_YEAR` column's ending year.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit charter code
+      for charter / specialty-school districts; NULL for state-level aggregate rows. FK to the education
+      districts dimension. Because the source publishes only district NAMES (no codes), codes are resolved
+      against `data/gold/education/_dimensions/districts.parquet` via the shared educator-topic resolver
+      (year-aware certified_personnel lookups, curated code pins, and guarded name matching — see src/etl/education/gosa/_educator_lookups.py).
+      Rows whose names cannot be resolved are dropped only under documented predicates; the transform
+      manifest records each dropped class and count per year.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded); NULL for district-level and state-level aggregate
+      rows. FK to the education schools dimension (composite key with district_code). Resolved by name
+      via the shared educator-topic resolver; school-level rows whose name cannot be resolved to a dimension
+      entry are dropped under documented source-gap predicates only (counts in the transform manifest).
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: poverty_subgroup
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Poverty stratum of the schools whose FTE this row aggregates. `total` covers all schools
+      in the entity; `high_poverty` covers only the entity's schools in the state's highest-poverty quartile;
+      `low_poverty` only those in the lowest-poverty quartile. Per GOSA's K-12 Teacher & Leader Workforce
+      Reports, a school's poverty level is defined by its direct-certification rate (the share of students
+      directly certified for free/reduced-price meals) — higher direct certification means higher poverty.
+      For a school-level row the stratum describes the school itself, so `high_poverty`/`low_poverty`
+      rows duplicate that school's `total` row (enforced by a quality check). This is a SCHOOL-poverty
+      stratum, NOT a student demographic — it does not map to the global demographics dimension.
+    examples:
+    - 'total'
+    enum:
+    - 'high_poverty'
+    - 'low_poverty'
+    - 'total'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Poverty Subgroup
+    - property: short_description
+      value: 'School-poverty stratum the row covers: all schools (total), or only the highest- or lowest-poverty
+        quartile; a school-poverty level, not a student demographic.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'total'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: total_fte
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Total teacher full-time equivalent count in the entity (or in the poverty subgroup).
+      Fractional FTEs are real (e.g. 42.5). NULL when suppressed by the GOSA reporting floor (`TFS`, <
+      10 teachers; 2022 onward only). Denominator of `out_of_field_fte_rate`. The 2019 statewide level
+      (162,256.2) is ~37% above neighboring years (2018: 118,009.1; 2020: 110,800.8) — a broader teacher
+      population GOSA reported that year at every detail level; and the 2018 file mixes scopes across
+      levels (school rows broad, district/state rows narrow). Preserved faithfully per data-cleaning-standards
+      §4b (extreme-but-conceivable).'
+    examples:
+    - 42.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Total FTE
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by the GOSA reporting floor (`TFS`, fewer than 10 teachers); suppression exists
+        from the 2022 file onward — 2018-2021 contain no suppression.
+    - property: metric_component
+      value: denominator
+  - name: out_of_field_fte
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Teacher FTE assigned to a subject for which the teacher is not certified (teaching out
+      of field) in the entity (or poverty subgroup). NULL when suppressed (`TFS`, < 10 FTE) — observed
+      from 2022 onward (~88% of school-level rows). KNOWN ANOMALY: 2018-2021 files have no explicit suppression
+      but carry implausibly high concentrations of literal 0 (2020: 48% of school-level rows; 2021: 18%)
+      that almost certainly encode suppression as zero. True zeros cannot be mechanically separated, so
+      every bronze 0 is preserved as 0.0 — treat 2018-2021 zeros with caution (school-level aggregates
+      including 2020 are biased toward zero). Numerator of `out_of_field_fte_rate`. In this topic the
+      2018-2022 bronze OUTOFFIELD_FTE column carries genuine out-of-field values (unlike the sibling emergency-credentials
+      topic, whose 2018-2021 bronze mislabels Emergency values under the same header).'
+    examples:
+    - 4.2
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Out of Field FTE
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed (`TFS`, < 10 FTE) — 2022 onward. 2018-2021 files have no suppression, so NULL
+        does not occur there; but see the description for the 2018-2021 suppression-as-zero anomaly.
+    - property: metric_component
+      value: numerator
+  - name: out_of_field_fte_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: '`out_of_field_fte` / `total_fte` on a 0-1 decimal scale. Bronze publishes an integer
+      0-100 percent (verified range 0-100 across all years); divided by 100 per data-cleaning-standards
+      §4. Because GOSA rounds the percent to an integer computed from unrounded FTE values, the published
+      rate deviates from out_of_field_fte/total_fte by up to 0.0124 at entities with total_fte >= 3 (enforced
+      within 0.015 by a quality check scoped to total_fte >= 3). At 26 tiny-FTE rows (total_fte < 3, 2018-2021
+      alternative programs) the published percent deviates by up to 0.57 from the rounded-FTE quotient
+      (e.g. 1.0/1.0 published as 50%) — GOSA evidently computed those percents from unrounded FTE values;
+      the published rate is preserved per §4b (extreme-but-conceivable, not impossible).'
+    examples:
+    - 0.11
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Out of Field FTE Rate
+    - property: short_description
+      value: Share of teacher FTE assigned out of field, on a 0-1 scale (out_of_field_fte / total_fte).
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: The bronze percentage itself was suppressed (`TFS`) — 2022 onward. The rate can be non-NULL
+        while `out_of_field_fte` is suppressed, and vice versa — GOSA suppresses each cell independently.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: poverty_subgroup_in_allowed_values
+    description: poverty_subgroup is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE poverty_subgroup IS NOT NULL AND poverty_subgroup NOT IN
+      ('high_poverty', 'low_poverty', 'total')
+    mustBe: 0
+  - type: sql
+    name: total_fte_non_negative
+    description: total_fte is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE total_fte IS NOT NULL AND total_fte < 0
+    mustBe: 0
+  - type: sql
+    name: out_of_field_fte_non_negative
+    description: out_of_field_fte is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE out_of_field_fte IS NOT NULL AND out_of_field_fte < 0
+    mustBe: 0
+  - type: sql
+    name: out_of_field_fte_rate_within_unit_interval
+    description: out_of_field_fte_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE out_of_field_fte_rate IS NOT NULL AND (out_of_field_fte_rate
+      < 0 OR out_of_field_fte_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: out_of_field_fte_within_total_fte
+    description: 'The out-of-field FTE count never exceeds the total teacher FTE it is drawn from (verified
+      across all bronze years: zero violations).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE out_of_field_fte IS NOT NULL AND total_fte IS NOT NULL
+      AND out_of_field_fte > total_fte
+    mustBe: 0
+  - type: sql
+    name: out_of_field_fte_rate_reconciles_with_components
+    description: 'out_of_field_fte_rate reconciles with out_of_field_fte / total_fte within 0.015 on the
+      0-1 scale, scoped to rows with total_fte >= 3. Tolerance and scope derived from bronze: GOSA publishes
+      an integer percent computed from unrounded FTE values, so the worst in-scope deviation is 0.0124;
+      below 3 FTE the 0.1-FTE rounding dominates and 26 tiny alternative-program rows (2018-2021) deviate
+      by up to 0.57 — those published rates are preserved per §4b and documented in the column description.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE total_fte IS NOT NULL AND out_of_field_fte IS NOT NULL
+      AND out_of_field_fte_rate IS NOT NULL AND total_fte >= 3 AND ABS(out_of_field_fte / total_fte -
+      out_of_field_fte_rate) > 0.015
+    mustBe: 0
+  - type: sql
+    name: school_poverty_stratum_mirrors_total
+    description: A school-level high_poverty or low_poverty row duplicates the same school's total row
+      (a school IS its poverty stratum; the stratum rows are republications, not sub-populations). Checked
+      on all three metrics (total_fte, out_of_field_fte, out_of_field_fte_rate) with a 0.001 float tolerance
+      and null-safe guards — GOSA suppresses each cell independently, so a comparison is made only when
+      both sides are non-NULL.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, MAX(CASE WHEN poverty_subgroup
+      = 'total' THEN total_fte END) AS t, MAX(CASE WHEN poverty_subgroup = 'high_poverty' THEN total_fte
+      END) AS hp, MAX(CASE WHEN poverty_subgroup = 'low_poverty' THEN total_fte END) AS lp, MAX(CASE WHEN
+      poverty_subgroup = 'total' THEN out_of_field_fte END) AS to_, MAX(CASE WHEN poverty_subgroup = 'high_poverty'
+      THEN out_of_field_fte END) AS hpo, MAX(CASE WHEN poverty_subgroup = 'low_poverty' THEN out_of_field_fte
+      END) AS lpo, MAX(CASE WHEN poverty_subgroup = 'total' THEN out_of_field_fte_rate END) AS tr, MAX(CASE
+      WHEN poverty_subgroup = 'high_poverty' THEN out_of_field_fte_rate END) AS hpr, MAX(CASE WHEN poverty_subgroup
+      = 'low_poverty' THEN out_of_field_fte_rate END) AS lpr FROM {object} WHERE school_code IS NOT NULL
+      GROUP BY year, district_code, school_code) WHERE (t IS NOT NULL AND hp IS NOT NULL AND ABS(hp -
+      t) > 0.001) OR (t IS NOT NULL AND lp IS NOT NULL AND ABS(lp - t) > 0.001) OR (to_ IS NOT NULL AND
+      hpo IS NOT NULL AND ABS(hpo - to_) > 0.001) OR (to_ IS NOT NULL AND lpo IS NOT NULL AND ABS(lpo
+      - to_) > 0.001) OR (tr IS NOT NULL AND hpr IS NOT NULL AND ABS(hpr - tr) > 0.001) OR (tr IS NOT
+      NULL AND lpr IS NOT NULL AND ABS(lpr - tr) > 0.001)
+    mustBe: 0
+  - type: sql
+    name: school_never_in_both_poverty_strata
+    description: The high/low poverty quartiles are disjoint, so no school carries both a high_poverty
+      and a low_poverty row in the same year (verified across all bronze years).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code FROM {object} WHERE school_code
+      IS NOT NULL AND poverty_subgroup IN ('high_poverty', 'low_poverty') GROUP BY year, district_code,
+      school_code HAVING COUNT(DISTINCT poverty_subgroup) > 1) AS bad
+    mustBe: 0
+  - type: sql
+    name: aggregate_poverty_strata_within_total
+    description: 'At district and state level the high-poverty and low-poverty strata are disjoint subsets
+      of the entity, so high_poverty + low_poverty <= total + 0.25 when all three are reported — checked
+      on both total_fte and out_of_field_fte. The 0.25 tolerance covers GOSA''s 0.1-FTE rounding (observed
+      worst excess: 0.1 at Greene County 2021/2022 and Richmond County 2021).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, MAX(CASE WHEN poverty_subgroup = 'total'
+      THEN total_fte END) AS t, MAX(CASE WHEN poverty_subgroup = 'high_poverty' THEN total_fte END) AS
+      hp, MAX(CASE WHEN poverty_subgroup = 'low_poverty' THEN total_fte END) AS lp, MAX(CASE WHEN poverty_subgroup
+      = 'total' THEN out_of_field_fte END) AS to_, MAX(CASE WHEN poverty_subgroup = 'high_poverty' THEN
+      out_of_field_fte END) AS hpo, MAX(CASE WHEN poverty_subgroup = 'low_poverty' THEN out_of_field_fte
+      END) AS lpo FROM {object} WHERE school_code IS NULL GROUP BY year, district_code) WHERE (t IS NOT
+      NULL AND hp IS NOT NULL AND lp IS NOT NULL AND hp + lp > t + 0.25) OR (to_ IS NOT NULL AND hpo IS
+      NOT NULL AND lpo IS NOT NULL AND hpo + lpo > to_ + 0.25)
+    mustBe: 0
+  - type: sql
+    name: state_rows_exactly_three_per_year
+    description: 'Structural fact: every year carries exactly three state-level rows (district_code IS
+      NULL) — one per poverty stratum.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL GROUP BY year HAVING
+      COUNT(*) <> 3 OR COUNT(DISTINCT poverty_subgroup) <> 3) AS bad
+    mustBe: 0
+customProperties:
+- property: title
+  value: Out-of-Field Teachers
+- property: summary
+  value: Share of Georgia teachers assigned to a subject they are not certified in, by school, district,
+    and poverty stratum, 2018-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2018-2024
+- property: schema_hash
+  value: 35a0950217777a14172f8158bc092343fe305e6e0558fd83a6ce487a3203db8f
+- property: available_years
+  value:
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

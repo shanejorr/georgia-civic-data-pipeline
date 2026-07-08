@@ -1,0 +1,470 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.attendance
+name: attendance
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Distribution of Georgia public-school students across three absentee tiers (5 or fewer, 6-15,
+    and more than 15 days absent during the school year), plus a chronic-absence rate (10% or more of
+    enrolled days; published from 2018) and the student count in the denominator, for every school with
+    official district and state rollups, by demographic subgroup (race/ethnicity, gender, economic status,
+    English proficiency, migrant status, disability status). Published by GOSA for school years 2003-04
+    through 2023-24.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: 'Suppressed cells are NULL (not zero): 2004 publishes blank cells for many subgroups (including
+    some state-level rows); 2021-2022 use the TFS (too few students) literal; 2023-2024 mix TFS and blank
+    cells per cell, so the tier metrics are not co-suppressed and small-population subgroups (notably
+    native_american) are mostly NULL in 2021-2024. chronically_absent_rate is NULL for every year before
+    2018. Rate metrics are NULL (masked) where a subgroup has zero students. State rows have NULL district_code
+    and school_code; district rows have NULL school_code. The race axis uses the combined asian_pacific_islander
+    bucket — not comparable row-for-row with split-convention topics without aggregating those topics''
+    asian + pacific_islander rows at query time.'
+tags:
+- education
+- gosa
+- attendance
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/attendance/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/attendance/**/*.parquet
+  format: parquet
+schema:
+- name: attendance
+  logicalType: object
+  physicalType: parquet
+  physicalName: attendance
+  description: attendance fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+  - property: key_metric
+    value: chronically_absent_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/attendance/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM attendance WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM attendance WHERE district_code = '601' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending (spring) calendar year of the school year (e.g. 2024 for 2023-24). 2011-2024 files
+      carry a LONG_SCHOOL_YEAR cross-checked against the filename; 2004-2010 files carry no year column,
+      so the filename year (verified as the ending year via year-over-year enrollment continuity) is authoritative.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit state-charter codes (present from 2010). NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). 2004-2010 sources publish unpadded codes ('103'),
+      zero-padded here to align with 2011-2024. NULL on district- and state-level rows.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic subgroup (FK to the global demographics dimension); 15 subgroups in every
+      year. Race buckets use the combined asian_pacific_islander key (pre-1997 OMB convention): the source
+      publishes six race buckets with a bare ''Asian'' label and never a separate Pacific Islander row,
+      and the six buckets'' state-level student counts sum exactly to the ''all'' total in every year
+      except 2013 (where they fall short by exactly 8 of 1.84M students — an unallocated-records artifact,
+      not a dropped-Pacific-Islander population). ''all'' is the unfiltered total and overlaps every other
+      value; subgroups are mutually exclusive only within their own category (race, gender, economic,
+      English proficiency, disability, migrant).'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'migrant'
+    - 'multiracial'
+    - 'native_american'
+    - 'not_economically_disadvantaged'
+    - 'students_with_disabilities'
+    - 'students_without_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Student subgroup the row describes (race, gender, economic status, English learner, migrant,
+        or disability); 'all' is every student.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Number of students in the subgroup used as the denominator for the rate metrics. A real
+      0 means the subgroup has no students at that entity. §4b mask: in 2023 (5 rows) and 2024 (6 rows)
+      the source published STUDENT_COUNT_FEMALE = 0 alongside non-zero published rates at tiny special-population
+      schools (e.g. East DeKalb Special Education Center 2023: all=80, male=71, female reads 0) — a zero
+      population cannot carry non-zero rates, so those counts are NULLed and the rates kept.'
+    examples:
+    - 954
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Students
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'Suppressed by GOSA (TFS literals 2021-2024, blank cells 2023-2024), or masked: 11 rows in
+        2023-2024 published an impossible count of 0 alongside non-zero rates.'
+    - property: metric_component
+      value: denominator
+  - name: five_or_fewer_days_absent_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Proportion of the subgroup absent five or fewer days during the school year (0-1 scale;
+      source publishes 0-100, divided by 100). Together with the 6-15 and over-15 tiers it partitions
+      the subgroup population (sums to ~1.0). §4b mask: in 2005-2020 the source publishes 0 for all rate
+      metrics when the subgroup has zero students; those placeholder zeros are NULLed (rates of an empty
+      population are undefined; 2004 already publishes NULL there).'
+    examples:
+    - 0.452
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Five or Fewer Days Absent Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (blank cells in 2004, TFS/blank from 2021), or a zero-population placeholder
+        masked to NULL (2005-2020).
+  - name: six_to_fifteen_days_absent_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Proportion of the subgroup absent six to fifteen days during the school year (0-1 scale;
+      source publishes 0-100, divided by 100). Middle tier of the three-tier partition. Zero-population
+      placeholder zeros NULLed in 2005-2020 (see five_or_fewer_days_absent_rate).
+    examples:
+    - 0.381
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Six to Fifteen Days Absent Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (blank cells in 2004, TFS/blank from 2021), or a zero-population placeholder
+        masked to NULL (2005-2020).
+  - name: over_15_days_absent_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Proportion of the subgroup absent more than fifteen days during the school year (0-1
+      scale; source publishes 0-100, divided by 100). Top tier of the three-tier partition; often used
+      as a chronic-absenteeism proxy but distinct from chronically_absent_rate (different cutoff definitions).
+      Zero-population placeholder zeros NULLed in 2005-2020 (see five_or_fewer_days_absent_rate).
+    examples:
+    - 0.168
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Over 15 Days Absent Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (blank cells in 2004, TFS/blank from 2021), or a zero-population placeholder
+        masked to NULL (2005-2020).
+  - name: chronically_absent_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Proportion of the subgroup chronically absent — absent 10% or more of enrolled days,
+      the federal definition (0-1 scale; source publishes 0-100, divided by 100). Published 2018-2024
+      only: the column does not exist in the 2004-2010 and 2012-2017 sources, and the 2011 column''s only
+      non-null values are zero-population placeholder zeros (masked to NULL), so 2004-2017 is entirely
+      NULL. NOT equal to over_15_days_absent_rate — the cutoffs differ (10% of enrolled days vs a fixed
+      15-day count).'
+    examples:
+    - 0.121
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Chronically Absent Rate
+    - property: short_description
+      value: Share of the subgroup chronically absent (missing 10% or more of enrolled days), on a 0-1
+        scale; published from 2018.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Not published before 2018 (no column 2004-2010 and 2012-2017; 2011's column holds only zero-population
+        placeholders), suppressed (TFS/blank 2021-2024), or a zero-population placeholder masked to NULL
+        (2018-2020).
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 15 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'economically_disadvantaged', 'english_learners', 'female', 'hispanic',
+      'male', 'migrant', 'multiracial', 'native_american', 'not_economically_disadvantaged', 'students_with_disabilities',
+      'students_without_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: num_students_non_negative
+    description: num_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 0
+    mustBe: 0
+  - type: sql
+    name: five_or_fewer_days_absent_rate_within_unit_interval
+    description: five_or_fewer_days_absent_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE five_or_fewer_days_absent_rate IS NOT NULL AND (five_or_fewer_days_absent_rate
+      < 0 OR five_or_fewer_days_absent_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: six_to_fifteen_days_absent_rate_within_unit_interval
+    description: six_to_fifteen_days_absent_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE six_to_fifteen_days_absent_rate IS NOT NULL AND (six_to_fifteen_days_absent_rate
+      < 0 OR six_to_fifteen_days_absent_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: over_15_days_absent_rate_within_unit_interval
+    description: over_15_days_absent_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE over_15_days_absent_rate IS NOT NULL AND (over_15_days_absent_rate
+      < 0 OR over_15_days_absent_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: chronically_absent_rate_within_unit_interval
+    description: chronically_absent_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE chronically_absent_rate IS NOT NULL AND (chronically_absent_rate
+      < 0 OR chronically_absent_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: absentee_tiers_partition_population
+    description: Where num_students > 0, the three absentee tiers (<=5, 6-15, >15 days) partition the
+      population and sum to 1.0 (+/-0.02).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_students > 0 AND five_or_fewer_days_absent_rate IS
+      NOT NULL AND six_to_fifteen_days_absent_rate IS NOT NULL AND over_15_days_absent_rate IS NOT NULL
+      AND ABS(five_or_fewer_days_absent_rate + six_to_fifteen_days_absent_rate + over_15_days_absent_rate
+      - 1.0) > 0.02
+    mustBe: 0
+  - type: sql
+    name: state_race_partition_sums_to_all
+    description: 'At the state level the six mutually exclusive race buckets partition the student population:
+      their num_students values sum exactly to the ''all'' total in every year except 2013 (the §5b math
+      test proving the combined Asian/Pacific Islander convention). State counts are never suppressed.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL AND year <> 2013 GROUP BY year HAVING SUM(CASE WHEN demographic IN ('asian_pacific_islander',
+      'black', 'hispanic', 'multiracial', 'native_american', 'white') THEN num_students ELSE 0 END) <>
+      MAX(CASE WHEN demographic = 'all' THEN num_students END)) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_race_partition_2013_gap_is_8
+    description: 'The single race-partition exception: in 2013 the six state-level race-bucket counts
+      fall short of the ''all'' total by exactly 8 students (unallocated records, 0.0004%% of 1,837,279
+      — three orders of magnitude below the expected Pacific Islander share, so not a dropped population).
+      Pinned exactly so any drift surfaces.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL AND year = 2013 GROUP BY year HAVING MAX(CASE WHEN demographic = 'all' THEN num_students
+      END) - SUM(CASE WHEN demographic IN ('asian_pacific_islander', 'black', 'hispanic', 'multiracial',
+      'native_american', 'white') THEN num_students ELSE 0 END) <> 8) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_gender_partition_sums_to_all
+    description: At the state level male + female num_students sums exactly to the 'all' total in every
+      year (verified across all 21 bronze years; state counts are never suppressed).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL GROUP BY year HAVING SUM(CASE WHEN demographic IN ('male', 'female') THEN num_students ELSE
+      0 END) <> MAX(CASE WHEN demographic = 'all' THEN num_students END)) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: zero_population_rates_null
+    description: 'A subgroup with zero students has no defined rates: every row with num_students = 0
+      carries NULL for all four rate metrics (enforces the §4b zero-population placeholder mask; the source''s
+      placeholder 0.0 rates for empty subgroups in 2005-2020 are NULLed).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_students = 0 AND (five_or_fewer_days_absent_rate IS
+      NOT NULL OR six_to_fifteen_days_absent_rate IS NOT NULL OR over_15_days_absent_rate IS NOT NULL
+      OR chronically_absent_rate IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: chronically_absent_rate_null_through_2017
+    description: 'Chronic absence is published from 2018 only: the 2004-2010 and 2012-2017 sources have
+      no chronic column, and 2011''s column holds only zero-population placeholders (masked). No non-NULL
+      chronically_absent_rate may exist before 2018.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year <= 2017 AND chronically_absent_rate IS NOT NULL
+    mustBe: 0
+customProperties:
+- property: title
+  value: Student Attendance and Chronic Absenteeism
+- property: summary
+  value: Student attendance tiers and chronic-absence rates by Georgia school, district, and demographic
+    subgroup, 2004-2024.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2004-2024
+- property: schema_hash
+  value: 9033e13d86bf30d8958b6deedc65f10eebc3bb5e4ce4547215e5726aa86ecd95
+- property: available_years
+  value:
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

@@ -1,0 +1,316 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.pathway_graduation_rate
+name: pathway_graduation_rate
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia''s CCRPI ''Pathways'' completion indicator at the state, district, and school level,
+    2021-2024. NOTE ON THE TOPIC NAME: despite `pathway_graduation_rate` (which mirrors the GaDOE/Georgia
+    Insights file label ''Pathways Graduation Rates''), this is the CCRPI Readiness ''Pathway Completion''
+    indicator — NOT a graduation rate. It measures, among each graduating cohort, the share who completed
+    a coherent three-course sequence (''pathway'') in each of four elective areas: Advanced Academic (AP/IB/dual
+    enrollment), World Language, Fine Arts, and CTAE (Career, Technical, and Agricultural Education).
+    For actual graduation rates see `graduation_rate_4_year_cohort` and `ccrpi_graduation_rate`. The four
+    area rates are INDEPENDENT, OVERLAPPING per-area completion rates — they do NOT partition the cohort
+    and routinely sum above 1.0 (a student completing two pathways is counted in both). No demographic
+    breakdown. Source: Georgia Insights / GaDOE.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code;
+    district rows have NULL school_code. The four area rates (advanced_academic_pathway_rate, world_language_pathway_rate,
+    fine_arts_pathway_rate, ctae_pathway_rate) are INDEPENDENT, OVERLAPPING per-area completion rates,
+    NOT a partition of the cohort: a student who completes more than one pathway is counted in each, so
+    the four rates routinely sum above 1.0 — do not sum them or treat them as mutually exclusive shares.
+    2021 zero-encoding: the 2021 bronze file carries no text suppression markers (unlike the ''NA''/''TFS''
+    used from 2022 on) and encodes ''no applicable students'' as 0.0. The transform NULLs the 47 rows
+    where all four rates are exactly 0.0 (implausible as genuine rates; the same row identities appear
+    as NA/TFS in later years) and preserves partial-zero 2021 rows — leaving 180 surviving 2021 zero cells
+    (~18% of 2021 rows) ambiguous between a genuine 0% rate and suppression; 171 of the 180 appear as
+    NA/TFS at the same identities in 2022, so most are likely suppression. Coverage is 2021-2024; a 2025
+    source file exists upstream but is not yet ingested.'
+tags:
+- education
+- georgia insights
+- pathway_graduation_rate
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/pathway_graduation_rate/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/pathway_graduation_rate/**/*.parquet
+  format: parquet
+schema:
+- name: pathway_graduation_rate
+  logicalType: object
+  physicalType: parquet
+  physicalName: pathway_graduation_rate
+  description: pathway_graduation_rate fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code (geography columns are NULL
+    at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+  - property: key_metric
+    value: ctae_pathway_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/pathway_graduation_rate/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM pathway_graduation_rate WHERE year = 2024 LIMIT 100
+    - description: District 625 in 2024
+      query: SELECT * FROM pathway_graduation_rate WHERE district_code = '625' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Cohort graduation year (e.g., 2024 = the 2023-2024 graduating cohort). Sourced from the
+      in-file COHORT YEAR column, which equals the filename year in every bronze file.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA district code (FK to districts dimension). Standard 3-digit codes are zero-padded;
+      7-digit state-charter network codes (e.g., '7820120') pass through unchanged. NULL on the state-level
+      aggregate row.
+    examples:
+    - '625'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (FK to schools dimension; composite key with district_code).
+      Bronze 2021-2023 files mix 3- and 4-char school IDs; 3-char codes are zero-padded to align with
+      2024's uniformly 4-char format ('195' -> '0195'). NULL on state- and district-level aggregate rows.
+    examples:
+    - '0411'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: advanced_academic_pathway_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of the graduating cohort who completed an Advanced Academic pathway (AP, IB, or
+      dual enrollment), 0-1 scale (bronze ships 0-100; divided by 100). One of four INDEPENDENT, OVERLAPPING
+      per-area completion rates — they do not partition the cohort and routinely sum above 1.0.
+    examples:
+    - 0.995
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Advanced Academic Pathway Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed (bronze 'TFS') or no applicable students (bronze 'NA' in 2022-2024; all-four-zero
+        encoding in 2021, masked at transform time).
+  - name: world_language_pathway_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of the graduating cohort who completed three or more courses in a single world
+      language, 0-1 scale. One of four independent, overlapping per-area completion rates. Has the highest
+      NULL rate of the four (~42-44% in 2022-2024) — World Language is the least common pathway at smaller
+      schools.
+    examples:
+    - 0.9926
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: World Language Pathway Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed (bronze 'TFS') or no applicable students (bronze 'NA' in 2022-2024; all-four-zero
+        encoding in 2021, masked at transform time).
+  - name: fine_arts_pathway_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of the graduating cohort who completed a three-course Fine Arts sequence (visual
+      arts, music, theater, dance), 0-1 scale. One of four independent, overlapping per-area completion
+      rates.
+    examples:
+    - 0.9789
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Fine Arts Pathway Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed (bronze 'TFS') or no applicable students (bronze 'NA' in 2022-2024; all-four-zero
+        encoding in 2021, masked at transform time).
+  - name: ctae_pathway_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of the graduating cohort who completed a CTAE (Career, Technical, and Agricultural
+      Education) pathway — three sequenced CTAE courses in a single program area — 0-1 scale. One of four
+      independent, overlapping per-area completion rates.
+    examples:
+    - 0.9824
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: CTAE Pathway Rate
+    - property: short_description
+      value: Share of the cohort completing a CTAE (career/technical) course pathway, on a 0-1 scale.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed (bronze 'TFS') or no applicable students (bronze 'NA' in 2022-2024; all-four-zero
+        encoding in 2021, masked at transform time).
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: advanced_academic_pathway_rate_within_unit_interval
+    description: advanced_academic_pathway_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE advanced_academic_pathway_rate IS NOT NULL AND (advanced_academic_pathway_rate
+      < 0 OR advanced_academic_pathway_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: world_language_pathway_rate_within_unit_interval
+    description: world_language_pathway_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE world_language_pathway_rate IS NOT NULL AND (world_language_pathway_rate
+      < 0 OR world_language_pathway_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: fine_arts_pathway_rate_within_unit_interval
+    description: fine_arts_pathway_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE fine_arts_pathway_rate IS NOT NULL AND (fine_arts_pathway_rate
+      < 0 OR fine_arts_pathway_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: ctae_pathway_rate_within_unit_interval
+    description: ctae_pathway_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE ctae_pathway_rate IS NOT NULL AND (ctae_pathway_rate <
+      0 OR ctae_pathway_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: one_state_row_per_year
+    description: Every bronze file carries exactly one state aggregate row (SYSTEM ID = 'ALL'), so gold
+      must have exactly one row with NULL district_code per year (verified against all four bronze files).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL GROUP BY year HAVING
+      COUNT(*) <> 1)
+    mustBe: 0
+  - type: sql
+    name: no_all_zero_pathway_rows
+    description: 'Guard for the 2021 zero-encoded-suppression mask: no gold row may carry exactly 0 in
+      all four pathway rates. 2021''s 47 such bronze rows are the ''no applicable students'' encoding
+      (masked to NULL); 2022-2024 bronze uses NA/TFS markers and contains no zero cells at all (verified).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE advanced_academic_pathway_rate = 0 AND world_language_pathway_rate
+      = 0 AND fine_arts_pathway_rate = 0 AND ctae_pathway_rate = 0
+    mustBe: 0
+customProperties:
+- property: title
+  value: CCRPI Pathway Completion Rates
+- property: summary
+  value: Share of each graduating cohort completing a course pathway in four elective areas, by school
+    and district, 2021-2024.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2021-2024
+- property: schema_hash
+  value: e31c596116d259a2604d2e2b2753906ccb45e31dcf57095c7d32dfae0cc552bd
+- property: available_years
+  value:
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

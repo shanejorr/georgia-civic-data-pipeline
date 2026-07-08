@@ -1,0 +1,296 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.inmate_releases_county
+name: inmate_releases_county
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Annual counts of Georgia prison releases by the released inmate''s HOME COUNTY — the county
+    of record GDC attributes the inmate to at release (their county of residence/record), NOT the county
+    of the offense and NOT the county of the releasing facility. Covers all 159 Georgia counties plus
+    a statewide rollup row, in two parallel editions of the GDC Statistical Trends standing report: calendar-year
+    counts and Georgia state fiscal-year counts (July 1 - June 30, labeled by ending year), each a rolling
+    window of the five most recent complete years. This measures release THROUGHPUT (people released back
+    to each county per year), not a point-in-time population. The statewide row is the source''s printed
+    Total and also includes releases not attributable to any Georgia county (out-of-state/other custody,
+    roughly 1-9 per year, and unknown home county, roughly 880-1,270 per year), so county rows sum to
+    about 7-10% less than the statewide row.'
+  usage: 'Cite the Georgia Department of Corrections, Office of Data Management & Research (Statistical
+    Trends standing reports). Always filter to a single reporting_period — the calendar-year and fiscal-year
+    editions are different 12-month windows over the same release activity and must never be pooled or
+    summed. Use the statewide row (county_fips IS NULL) for the true statewide total: it includes releases
+    not attributable to any Georgia county, so the 159 county rows intentionally sum to less than it.
+    Home county is the inmate''s county of record at release — do not interpret counts as offense-county
+    or facility-county measures.'
+  limitations: 'Statewide rollup rows have NULL county_fips. Home county is the released inmate''s county
+    of record at release, not the offense or facility county. County rows do NOT sum to the statewide
+    row: releases with an out-of-state/other-custody home county (~1-9/yr) or no recorded home county
+    (~880-1,270/yr, about 7-10% of releases) are included in the statewide Total but excluded as rows
+    (they are not Georgia counties); the transform verifies the exact reconciliation before excluding
+    them. Each edition is a rolling window of the five most recent complete years — coverage shifts forward
+    with every source refresh, and older years drop out of the source. The calendar_year and fiscal_year
+    editions are separate 12-month bases; never pool across reporting_period. A YEAR >= 2000 floor is
+    enforced at transform time (all published years, 2021-2026, clear it). The source has no suppression:
+    every cell is a published integer and zeros are real.'
+tags:
+- criminal_justice
+- georgia department of corrections, office of data management & research — statistical trends standing
+  reports
+- inmate_releases_county
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/inmate_releases_county/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/inmate_releases_county/**/*.parquet
+  format: parquet
+schema:
+- name: inmate_releases_county
+  logicalType: object
+  physicalType: parquet
+  physicalName: inmate_releases_county
+  description: inmate_releases_county fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, county_fips, reporting_period (geography columns are NULL
+    at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gdc
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - reporting_period
+  - property: key_metric
+    value: inmate_releases
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/inmate_releases_county/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2026), counties detail
+      query: SELECT * FROM inmate_releases_county WHERE year = 2026 LIMIT 100
+    - description: Filter by reporting_period = calendar_year
+      query: SELECT * FROM inmate_releases_county WHERE reporting_period = 'calendar_year' AND year =
+        2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Year of release. On reporting_period = 'calendar_year' rows this is the calendar year
+      of release; on 'fiscal_year' rows it is the Georgia state fiscal year (July 1 - June 30, labeled
+      by its ending year — fiscal year 2026 spans July 2025 - June 2026). Each edition covers a rolling
+      window of the five most recent complete years, so coverage shifts forward with every source refresh.
+      Years before 2000 are not served (year floor enforced at transform time; the source publishes none).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    - property: short_description
+      value: Release year (calendar year on calendar_year rows; Georgia state fiscal year on fiscal_year
+        rows).
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the released inmate's home county of record;
+      FK to the counties dimension. NULL on statewide rollup rows. Resolved from the county NAME printed
+      by GDC — the source's own 001-159 row prefix is its internal alphabetical index, not a FIPS code,
+      and is not served. Home county is the inmate's county of record/residence at release, not the county
+      of the offense or of the releasing facility.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: short_description
+      value: 5-digit FIPS of the released inmate's home county of record; NULL on statewide rows.
+    - property: null_meaning
+      value: NULL on the statewide rollup rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: reporting_period
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Which edition of the GDC report the row comes from: ''calendar_year'' (releases counted
+      by calendar year) or ''fiscal_year'' (releases counted by Georgia state fiscal year, July 1 - June
+      30). The two editions are different 12-month windows over the same release activity and overlap
+      in year coverage — filter to ONE reporting_period per analysis and never pool, sum, or average across
+      them.'
+    examples:
+    - 'calendar_year'
+    enum:
+    - 'calendar_year'
+    - 'fiscal_year'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Reporting Period
+    - property: short_description
+      value: 'Release-count basis: calendar_year or fiscal_year edition. Different 12-month windows —
+        never pool.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: inmate_releases
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Number of GDC prison releases in the year whose released inmate's home county of record
+      is the row's county. Statewide rows carry the source's printed Total, which additionally includes
+      releases with an out-of-state/other-custody home county (roughly 1-9 per year) and releases with
+      no home county recorded (roughly 880-1,270 per year, about 7-10% of all releases) — so summing the
+      159 county rows yields LESS than the statewide row by design. Zeros are real (e.g. Chattahoochee
+      County, calendar year 2025 = 0); the source has no suppression, and the transform verifies that
+      county rows plus the excluded residual buckets reconcile exactly to the printed Total before serving.
+    examples:
+    - 188
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Inmate Releases
+    - property: short_description
+      value: 'Count of prison releases attributed to the row''s home county in the year (statewide rows:
+        the source''s printed Total).'
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: reporting_period_in_allowed_values
+    description: reporting_period is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_period IS NOT NULL AND reporting_period NOT IN
+      ('calendar_year', 'fiscal_year')
+    mustBe: 0
+  - type: sql
+    name: inmate_releases_non_negative
+    description: inmate_releases is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE inmate_releases IS NOT NULL AND inmate_releases < 0
+    mustBe: 0
+  - type: sql
+    name: year_at_or_after_2000
+    description: 'Hard ingestion rule for this topic: only years from 2000 onward are served (the source
+      publishes 2021-2026). Enforces the transform-time year floor as a contract invariant.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year < 2000
+    mustBe: 0
+  - type: sql
+    name: inmate_releases_present
+    description: Every cell in both source tables is a published integer (no suppression) — a NULL count
+      means a parse regression, not source suppression.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE inmate_releases IS NULL
+    mustBe: 0
+  - type: sql
+    name: exactly_159_counties_per_year_edition
+    description: Each edition publishes all 159 Georgia counties for every year column, so every (year,
+      reporting_period) must carry exactly 159 county rows.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, reporting_period, COUNT(CASE WHEN county_fips IS NOT NULL
+      THEN 1 END) AS n_counties FROM {object} GROUP BY year, reporting_period) WHERE n_counties != 159
+    mustBe: 0
+  - type: sql
+    name: one_state_row_per_year_edition
+    description: The source's printed Total row is served as exactly one statewide rollup row per (year,
+      reporting_period).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, reporting_period, COUNT(CASE WHEN county_fips IS NULL THEN
+      1 END) AS n_state FROM {object} GROUP BY year, reporting_period) WHERE n_state != 1
+    mustBe: 0
+  - type: sql
+    name: state_total_at_least_county_sum
+    description: The statewide row is the source's printed Total, which includes the excluded non-county
+      residual buckets (out-of-state/other custody and unknown home county) — so it must be at least the
+      sum of the 159 county rows for every (year, reporting_period). Exact reconciliation including the
+      residuals is asserted at transform time.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, reporting_period, MAX(CASE WHEN county_fips IS NULL THEN
+      inmate_releases END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN inmate_releases
+      END) AS county_sum FROM {object} GROUP BY year, reporting_period) WHERE state_total IS NOT NULL
+      AND county_sum IS NOT NULL AND state_total < county_sum
+    mustBe: 0
+  - type: sql
+    name: five_years_per_reporting_period
+    description: Each edition is a rolling window of exactly the five most recent complete years — fewer
+      or more distinct years in an edition means partitions were lost or a stale window survived a refresh.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT reporting_period, COUNT(DISTINCT year) AS n_years FROM {object}
+      GROUP BY reporting_period) WHERE n_years != 5
+    mustBe: 0
+customProperties:
+- property: title
+  value: Prison Releases by Home County
+- property: summary
+  value: Annual Georgia prison releases attributed to each released inmate's home county of record, from
+    GDC's calendar-year and fiscal-year Statistical Trends reports (rolling five-year windows).
+- property: source
+  value: Georgia Department of Corrections, Office of Data Management & Research — Statistical Trends
+    standing reports
+- property: source_url
+  value: https://gdc.georgia.gov/organization/about-gdc/agency-activity/research-and-reports/standing-reports/statistical-trends
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2021-2026
+- property: schema_hash
+  value: c4a7ef2bce93d8898677eec223417cf0c01ec56c5adb69bc8170a4361a5c2e2e
+- property: available_years
+  value:
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+- property: year_gaps
+  value: []

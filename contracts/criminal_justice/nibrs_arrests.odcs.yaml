@@ -1,0 +1,810 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.nibrs_arrests
+name: nibrs_arrests
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Arrests reported by Georgia law-enforcement agencies to the FBI''s National Incident-Based
+    Reporting System (NIBRS), aggregated from arrestee-level master extracts to county x year x offense
+    type x arrest type x demographic, plus a statewide rollup. Counts are physical arrests (duplicate
+    NIBRS multiple-arrest segments excluded) — raw agency reports, unestimated and unadjusted for non-reporting
+    agencies. Arrests reach NIBRS by two paths that are served as separate reporting_segment values, never
+    blended: arrests tied to a Group A incident (county-attributable via the reporting agency''s primary
+    county, all years) and standalone Group B arrest reports (drunkenness, DUI, disorderly conduct, ...
+    — arrest-only offenses with no agency link in the extracts: state-level only, published 2022 onward,
+    roughly half of all arrests). Georgia transitioned from SRS summary reporting to NIBRS around October
+    2019, so every row also carries the coverage flag and agencies_reporting companion count shared with
+    the nibrs_offenses topic. Demographic rows cover race (NIBRS split Asian / Pacific Islander convention,
+    plus race_unknown) and sex; arrestee age (juvenile/adult) and Hispanic ethnicity are served as count
+    partitions of every row because NIBRS reports race and ethnicity as separate fields.'
+  usage: 'Cite the FBI Crime Data Explorer (cde.ucr.cjis.gov), NIBRS master extracts for Georgia. Counts
+    are raw and unestimated: never compare across the coverage flag boundary (2018-2019 vs 2020+) or across
+    reporting_segment without noting the coverage breaks, and read county trends alongside agencies_reporting.
+    Sum arrest_count freely across offense types, arrest types, and (within one demographic category)
+    demographics; always filter demographic to ''all'' or to a single category (race OR sex) first. Arrest
+    rates require an external population denominator (not served here). Arrest counts measure enforcement
+    activity, not crime prevalence, and NIBRS race/ethnicity values are officer-reported.'
+  limitations: 'State rows have NULL county_fips. Counts are unestimated raw agency reports: 2018-2019
+    cover early-adopter agencies only (37 / 276 agencies; 2018 has just 315 arrest segments) and are not
+    comparable to 2020+ as a state series. Standalone Group B arrest reports (roughly half of all arrests)
+    appear only from 2022 and carry no agency link, so they are state-only (reporting_segment = ''group_b_arrest_report'');
+    county rows for Group B offense types reflect only arrests tied to Group A incidents and vastly understate
+    those offenses. Arrests are attributed to the reporting agency''s primary county — multi-county agencies
+    are not split. Race and sex demographic rows are officer-reported; Hispanic ethnicity is a separate
+    NIBRS field served as count partitions (unknown/unreported ethnicity runs roughly 23-32% per year
+    from 2019, and 44% in the tiny 2018 sample). Arrestee weapon, resident status, and juvenile disposition
+    attributes are not served. NIBRS master extracts have no suppression — a cell with no arrests simply
+    has no row.'
+tags:
+- criminal_justice
+- fbi crime data explorer, nibrs master state extracts
+- nibrs_arrests
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/nibrs_arrests/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/nibrs_arrests/**/*.parquet
+  format: parquet
+schema:
+- name: nibrs_arrests
+  logicalType: object
+  physicalType: parquet
+  physicalName: nibrs_arrests
+  description: nibrs_arrests fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, demographic, coverage, reporting_segment,
+    offense_type, offense_category, crime_against, offense_group, arrest_type (geography columns are NULL
+    at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: fbi_cde
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+    - coverage
+    - reporting_segment
+    - offense_type
+    - offense_category
+    - crime_against
+    - offense_group
+    - arrest_type
+  - property: key_metric
+    value: arrest_count
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/nibrs_arrests/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), counties detail
+      query: SELECT * FROM nibrs_arrests WHERE year = 2024 LIMIT 100
+    - description: Filter by coverage = full_participation
+      query: SELECT * FROM nibrs_arrests WHERE coverage = 'full_participation' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: NIBRS data year (the year of the linked incident for Group A arrests; arrest dates can
+      spill into the following calendar year).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the reporting agency's primary county;
+      FK to the counties dimension. NULL on statewide rollup rows. Agencies spanning multiple counties
+      are attributed wholly to their primary county; statewide agencies (GBI, State Patrol) and all standalone
+      Group B arrest reports (which carry no agency link) count toward state rows only.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rollup rows (including every group_b_arrest_report row).
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Arrestee subgroup: ''all'' (every arrestee in the cell), a race value (NIBRS split convention:
+      asian and pacific_islander are separate; race_unknown is the agency-reported Unknown code), or a
+      sex value (male/female — NIBRS publishes no unknown sex). Race rows and sex rows each partition
+      the ''all'' row exactly; filter to one category when summing. NIBRS ethnicity (Hispanic origin)
+      is a separate field from race and is served via the hispanic_count / not_hispanic_count / ethnicity_unknown_count
+      partition on every row instead of demographic rows, which keeps race rows mutually exclusive.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian'
+    - 'black'
+    - 'female'
+    - 'male'
+    - 'native_american'
+    - 'pacific_islander'
+    - 'race_unknown'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Arrestee subgroup the row describes (race or sex); 'all' is every arrestee.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: coverage
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Methodology coverage flag for Georgia''s SRS-to-NIBRS transition (completed around October
+      2019). ''partial_adoption'' (2018-2019): only early-adopter agencies reported (37 in 2018 — just
+      315 arrest segments — and 276 in 2019), so these years are NOT comparable to later years as a state
+      series. ''full_participation'' (2020 onward): statewide NIBRS reporting, though the agency roster
+      still varies by year (401-455 agencies) — use agencies_reporting to separate arrest-volume change
+      from participation change.'
+    examples:
+    - 'full_participation'
+    enum:
+    - 'full_participation'
+    - 'partial_adoption'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Coverage
+    - property: short_description
+      value: 'NIBRS adoption phase: partial_adoption (2018-2019 early-adopter agencies only) or full_participation
+        (2020 onward).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: reporting_segment
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'The NIBRS path the arrest was reported through — a coverage boundary, never summed across
+      without noting it. ''group_a_incident_linked'': arrestee segments of Group A incidents (all years,
+      county-attributable; the arrest offense can still be a Group B code when the arrest cleared a Group
+      A incident). ''group_b_arrest_report'': standalone Group B arrest reports (roughly half of all arrests),
+      published in the Georgia extracts only from 2022 and carrying no agency link — state rows only.
+      A Group B offense type''s state series therefore jumps in 2022 for segment-blind sums, and its county
+      rows reflect only the incident-linked slice.'
+    examples:
+    - 'group_a_incident_linked'
+    enum:
+    - 'group_a_incident_linked'
+    - 'group_b_arrest_report'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Reporting Segment
+    - property: short_description
+      value: 'NIBRS reporting path: arrests tied to a Group A incident (county-attributable, all years)
+        vs standalone Group B arrest reports (state-only, 2022 onward).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: offense_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'NIBRS offense type of the arrest (Group A and Group B codes), snake_cased from the FBI
+      offense-type lookup pinned to the 2024 vocabulary so labels never vary by data year — identical
+      values to the nibrs_offenses topic, which serves Group A only (Group B offenses are arrest-only
+      in NIBRS: DUI, disorderly conduct, drunkenness, liquor law violations, trespass, curfew, nonviolent
+      family offenses, bad checks, runaway, and all_other_offenses). Sum arrest_count over offense types
+      within a cell for an all-offenses total; each offense type maps to exactly one offense_category,
+      crime_against, and offense_group.'
+    examples:
+    - 'drug_narcotic_violations'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Offense Type
+    - property: short_description
+      value: NIBRS offense the arrest was for (e.g. drug_narcotic_violations, simple_assault, driving_under_the_influence).
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: offense_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'FBI offense category (pinned 2024 vocabulary) grouping related offense types — e.g.
+      assault_offenses covers aggravated_assault, simple_assault, and intimidation; most Group B offenses
+      are their own category. Functionally dependent on offense_type: filter or group by it for category-level
+      counts without double counting.'
+    examples:
+    - 'drug_narcotic_offenses'
+    enum:
+    - 'all_other_offenses'
+    - 'animal_cruelty'
+    - 'arson'
+    - 'assault_offenses'
+    - 'bad_checks'
+    - 'bribery'
+    - 'burglary_breaking_entering'
+    - 'counterfeiting_forgery'
+    - 'curfew_loitering_vagrancy_violations'
+    - 'destruction_damage_vandalism_of_property'
+    - 'disorderly_conduct'
+    - 'driving_under_the_influence'
+    - 'drug_narcotic_offenses'
+    - 'drunkenness'
+    - 'embezzlement'
+    - 'extortion_blackmail'
+    - 'family_offenses_nonviolent'
+    - 'fraud_offenses'
+    - 'gambling_offenses'
+    - 'homicide_offenses'
+    - 'human_trafficking'
+    - 'kidnapping_abduction'
+    - 'larceny_theft_offenses'
+    - 'liquor_law_violations'
+    - 'motor_vehicle_theft'
+    - 'other_offenses'
+    - 'pornography_obscene_material'
+    - 'prostitution_offenses'
+    - 'robbery'
+    - 'sex_offenses'
+    - 'sex_offenses_non_forcible'
+    - 'stolen_property_offenses'
+    - 'trespass_of_real_property'
+    - 'weapon_law_violations'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Offense Category
+    - property: short_description
+      value: FBI offense category grouping related offense types (e.g. assault_offenses groups aggravated_assault,
+        simple_assault, intimidation).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 7
+  - name: crime_against
+    logicalType: string
+    physicalType: string
+    required: true
+    description: NIBRS crime-against class, functionally dependent on offense_type. 'not_a_crime' applies
+      only to runaway (NIBRS code 90I) — juveniles taken into protective custody, which the FBI classifies
+      as not a crime; a handful of such arrest segments appear in 2020.
+    examples:
+    - 'society'
+    enum:
+    - 'not_a_crime'
+    - 'person'
+    - 'property'
+    - 'society'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Crime Against
+    - property: short_description
+      value: 'NIBRS crime-against class: person, property, society, or not_a_crime (runaway only).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 8
+  - name: offense_group
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'FBI offense-code taxonomy, functionally dependent on offense_type: ''group_a'' offenses
+      are reported as full NIBRS incidents (and also appear in the nibrs_offenses topic); ''group_b''
+      offenses are arrest-only (90x codes) and exist in NIBRS only when an arrest occurs; ''not_a_crime''
+      is runaway (90I). Distinct from reporting_segment: a Group B-coded arrest that cleared a Group A
+      incident is reported through the incident-linked segment.'
+    examples:
+    - 'group_a'
+    enum:
+    - 'group_a'
+    - 'group_b'
+    - 'not_a_crime'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Offense Group
+    - property: short_description
+      value: 'FBI offense taxonomy of the arrest offense: group_a (incident-based offenses), group_b (arrest-only
+        offenses), or not_a_crime (runaway).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 9
+  - name: arrest_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'NIBRS arrest type (Data Element 42): ''on_view'' (apprehended without a warrant or prior
+      incident report), ''summoned_cited'' (cited to appear, not taken into custody), or ''taken_into_custody''
+      (arrested on a warrant or after an incident report). Arrest counts are additive across arrest types.'
+    examples:
+    - 'taken_into_custody'
+    enum:
+    - 'on_view'
+    - 'summoned_cited'
+    - 'taken_into_custody'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Arrest Type
+    - property: short_description
+      value: 'How the arrest was effected: on_view, summoned_cited, or taken_into_custody.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 10
+  - name: arrest_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Number of physical arrests in the cell: NIBRS arrestee segments after excluding duplicate
+      ''M'' multiple-indicator segments (one arrest clearing several Group A incidents publishes one counted
+      segment plus duplicates; roughly 2% of segments are excluded as duplicates). An arrestee arrested
+      on several occasions in the year is counted once per arrest. Raw, unestimated agency reports — interpret
+      across years together with coverage, reporting_segment, and agencies_reporting. Equals juvenile_count
+      + adult_count + age_unknown_count and hispanic_count + not_hispanic_count + ethnicity_unknown_count
+      on every row.'
+    examples:
+    - 1542
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Arrest Count
+    - property: short_description
+      value: Number of arrests of arrestees in this demographic for this offense and arrest type in the
+        county and year (raw NIBRS counts, unestimated).
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: juvenile_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Arrests of arrestees under 18 at arrest. juvenile_count + adult_count + age_unknown_count
+      = arrest_count.
+    examples:
+    - 120
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Juvenile Count
+    - property: unit
+      value: count
+  - name: adult_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Arrests of arrestees 18 or older at arrest (including the era-1 'Over 98' code, an adult
+      with unpublished age). juvenile_count + adult_count + age_unknown_count = arrest_count.
+    examples:
+    - 1400
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adult Count
+    - property: unit
+      value: count
+  - name: age_unknown_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Arrests with unknown arrestee age. The extracts encode unknown age as 0 from 2021 on
+      (age code 'Unknown') and as a blank age with the Unknown age code in 2018-2020 — an age of 0 is
+      a sentinel, not an infant arrestee. juvenile_count + adult_count + age_unknown_count = arrest_count.
+    examples:
+    - 22
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Age Unknown Count
+    - property: unit
+      value: count
+  - name: hispanic_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Arrests of arrestees whose NIBRS ethnicity is Hispanic or Latino. Ethnicity is a separate
+      NIBRS field from race (race values are not Hispanic-exclusive), so it is served as a count partition
+      on every row rather than as demographic rows — on a race-demographic row this is the Hispanic share
+      of that race group. hispanic_count + not_hispanic_count + ethnicity_unknown_count = arrest_count.
+    examples:
+    - 130
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Hispanic Count
+    - property: short_description
+      value: Arrests of arrestees reported as Hispanic or Latino (NIBRS ethnicity is separate from race).
+    - property: unit
+      value: count
+  - name: not_hispanic_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Arrests of arrestees whose NIBRS ethnicity is Not Hispanic or Latino. hispanic_count
+      + not_hispanic_count + ethnicity_unknown_count = arrest_count.
+    examples:
+    - 1300
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Not Hispanic Count
+    - property: unit
+      value: count
+  - name: ethnicity_unknown_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Arrests with unknown or unreported arrestee ethnicity (the NIBRS Unknown and Not Specified
+      codes plus 2018-2020 blanks; roughly 23-32% of arrests per year from 2019, and 44% in the tiny 2018
+      early-adopter sample). hispanic_count + not_hispanic_count + ethnicity_unknown_count = arrest_count.
+    examples:
+    - 112
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Ethnicity Unknown Count
+    - property: unit
+      value: count
+  - name: agencies_reporting
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Coverage companion, identical in construction to the nibrs_offenses topic: the number
+      of distinct agencies on the year''s NIBRS reporting roster (the 2018 extract''s 12 exact-duplicate
+      roster rows are deduplicated) — for county rows, agencies whose primary county is this county; for
+      statewide rows, all reporting agencies (37 in 2018, 276 in 2019, 401-455 from 2020). Constant across
+      offense types, arrest types, segments, and demographics within a county-year. Essential for the
+      adoption ramp: rising arrest counts alongside a rising agency count reflect coverage, not necessarily
+      enforcement.'
+    examples:
+    - 434
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Agencies Reporting
+    - property: short_description
+      value: Law-enforcement agencies that reported NIBRS data that year (county roster on county rows,
+        statewide roster on state rows).
+    - property: unit
+      value: count
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 9 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian', 'black', 'female', 'male', 'native_american', 'pacific_islander', 'race_unknown', 'white')
+    mustBe: 0
+  - type: sql
+    name: coverage_in_allowed_values
+    description: coverage is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE coverage IS NOT NULL AND coverage NOT IN ('full_participation',
+      'partial_adoption')
+    mustBe: 0
+  - type: sql
+    name: reporting_segment_in_allowed_values
+    description: reporting_segment is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_segment IS NOT NULL AND reporting_segment NOT
+      IN ('group_a_incident_linked', 'group_b_arrest_report')
+    mustBe: 0
+  - type: sql
+    name: offense_category_in_allowed_values
+    description: offense_category is one of the 34 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE offense_category IS NOT NULL AND offense_category NOT IN
+      ('all_other_offenses', 'animal_cruelty', 'arson', 'assault_offenses', 'bad_checks', 'bribery', 'burglary_breaking_entering',
+      'counterfeiting_forgery', 'curfew_loitering_vagrancy_violations', 'destruction_damage_vandalism_of_property',
+      'disorderly_conduct', 'driving_under_the_influence', 'drug_narcotic_offenses', 'drunkenness', 'embezzlement',
+      'extortion_blackmail', 'family_offenses_nonviolent', 'fraud_offenses', 'gambling_offenses', 'homicide_offenses',
+      'human_trafficking', 'kidnapping_abduction', 'larceny_theft_offenses', 'liquor_law_violations',
+      'motor_vehicle_theft', 'other_offenses', 'pornography_obscene_material', 'prostitution_offenses',
+      'robbery', 'sex_offenses', 'sex_offenses_non_forcible', 'stolen_property_offenses', 'trespass_of_real_property',
+      'weapon_law_violations')
+    mustBe: 0
+  - type: sql
+    name: crime_against_in_allowed_values
+    description: crime_against is one of the 4 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE crime_against IS NOT NULL AND crime_against NOT IN ('not_a_crime',
+      'person', 'property', 'society')
+    mustBe: 0
+  - type: sql
+    name: offense_group_in_allowed_values
+    description: offense_group is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE offense_group IS NOT NULL AND offense_group NOT IN ('group_a',
+      'group_b', 'not_a_crime')
+    mustBe: 0
+  - type: sql
+    name: arrest_type_in_allowed_values
+    description: arrest_type is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE arrest_type IS NOT NULL AND arrest_type NOT IN ('on_view',
+      'summoned_cited', 'taken_into_custody')
+    mustBe: 0
+  - type: sql
+    name: arrest_count_non_negative
+    description: arrest_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE arrest_count IS NOT NULL AND arrest_count < 0
+    mustBe: 0
+  - type: sql
+    name: juvenile_count_non_negative
+    description: juvenile_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE juvenile_count IS NOT NULL AND juvenile_count < 0
+    mustBe: 0
+  - type: sql
+    name: adult_count_non_negative
+    description: adult_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adult_count IS NOT NULL AND adult_count < 0
+    mustBe: 0
+  - type: sql
+    name: age_unknown_count_non_negative
+    description: age_unknown_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE age_unknown_count IS NOT NULL AND age_unknown_count < 0
+    mustBe: 0
+  - type: sql
+    name: hispanic_count_non_negative
+    description: hispanic_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE hispanic_count IS NOT NULL AND hispanic_count < 0
+    mustBe: 0
+  - type: sql
+    name: not_hispanic_count_non_negative
+    description: not_hispanic_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE not_hispanic_count IS NOT NULL AND not_hispanic_count <
+      0
+    mustBe: 0
+  - type: sql
+    name: ethnicity_unknown_count_non_negative
+    description: ethnicity_unknown_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE ethnicity_unknown_count IS NOT NULL AND ethnicity_unknown_count
+      < 0
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_non_negative
+    description: agencies_reporting is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NOT NULL AND agencies_reporting <
+      0
+    mustBe: 0
+  - type: sql
+    name: age_partition_sums_to_arrest_count
+    description: Every arrest is bucketed juvenile, adult, or unknown age, so the three partition counts
+      must sum exactly to arrest_count on every row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE arrest_count IS NOT NULL AND (juvenile_count IS NULL OR
+      adult_count IS NULL OR age_unknown_count IS NULL OR juvenile_count + adult_count + age_unknown_count
+      != arrest_count)
+    mustBe: 0
+  - type: sql
+    name: ethnicity_partition_sums_to_arrest_count
+    description: Every arrest is bucketed Hispanic, not Hispanic, or unknown ethnicity, so the three partition
+      counts must sum exactly to arrest_count on every row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE arrest_count IS NOT NULL AND (hispanic_count IS NULL OR
+      not_hispanic_count IS NULL OR ethnicity_unknown_count IS NULL OR hispanic_count + not_hispanic_count
+      + ethnicity_unknown_count != arrest_count)
+    mustBe: 0
+  - type: sql
+    name: race_rows_sum_to_all_row
+    description: Every arrestee carries exactly one race value (Unknown included), so within a cell the
+      race demographic rows must sum exactly to the 'all' row — the §5a mutual-exclusivity guarantee for
+      the race category.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, reporting_segment, offense_type, arrest_type,
+      MAX(CASE WHEN demographic = 'all' THEN arrest_count END) AS all_count, SUM(CASE WHEN demographic
+      IN ('asian', 'black', 'native_american', 'pacific_islander', 'race_unknown', 'white') THEN arrest_count
+      END) AS race_sum FROM {object} GROUP BY year, county_fips, reporting_segment, offense_type, arrest_type)
+      WHERE all_count IS NULL OR race_sum IS NULL OR race_sum != all_count
+    mustBe: 0
+  - type: sql
+    name: sex_rows_sum_to_all_row
+    description: Every arrestee is reported male or female (no unknown sex appears in any year), so within
+      a cell the sex demographic rows must sum exactly to the 'all' row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, reporting_segment, offense_type, arrest_type,
+      MAX(CASE WHEN demographic = 'all' THEN arrest_count END) AS all_count, SUM(CASE WHEN demographic
+      IN ('male', 'female') THEN arrest_count END) AS sex_sum FROM {object} GROUP BY year, county_fips,
+      reporting_segment, offense_type, arrest_type) WHERE all_count IS NULL OR sex_sum IS NULL OR sex_sum
+      != all_count
+    mustBe: 0
+  - type: sql
+    name: arrest_count_at_least_one
+    description: Rows exist only for cells with at least one arrest — a zero or negative count means the
+      aggregation broke.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE arrest_count IS NULL OR arrest_count < 1
+    mustBe: 0
+  - type: sql
+    name: state_arrest_total_covers_county_sum
+    description: The state row counts ALL arrests in the segment (statewide agencies included), so for
+      every cell with county rows a state row must exist with arrest_count >= the county sum.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, reporting_segment, offense_type, arrest_type, demographic,
+      MAX(CASE WHEN county_fips IS NULL THEN arrest_count END) AS state_total, SUM(CASE WHEN county_fips
+      IS NOT NULL THEN arrest_count END) AS county_sum FROM {object} GROUP BY year, reporting_segment,
+      offense_type, arrest_type, demographic) WHERE county_sum IS NOT NULL AND (state_total IS NULL OR
+      state_total < county_sum)
+    mustBe: 0
+  - type: sql
+    name: group_b_report_rows_are_state_only
+    description: Standalone Group B arrest reports carry no agency link in the extracts, so no group_b_arrest_report
+      row can have a county.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_segment = 'group_b_arrest_report' AND county_fips
+      IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: group_b_report_segment_starts_2022
+    description: The Georgia extracts publish the standalone Group B arrest-report segment only from 2022
+      — an earlier row means the coverage break is mislabeled.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_segment = 'group_b_arrest_report' AND year <
+      2022
+    mustBe: 0
+  - type: sql
+    name: coverage_matches_transition_year
+    description: 'The coverage flag versions Georgia''s Oct-2019 SRS-to-NIBRS transition: partial_adoption
+      before 2020, full_participation from 2020 on — a mismatch means the methodological break is mislabeled.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (year < 2020 AND coverage != 'partial_adoption') OR (year
+      >= 2020 AND coverage != 'full_participation')
+    mustBe: 0
+  - type: sql
+    name: offense_type_determines_dependent_attributes
+    description: offense_category, crime_against, and offense_group are denormalized attributes of offense_type
+      (pinned 2024 vocabulary) — each offense_type must map to exactly one value of each, or category
+      rollups would double count.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT offense_type, COUNT(DISTINCT offense_category) AS nc, COUNT(DISTINCT
+      crime_against) AS na, COUNT(DISTINCT offense_group) AS ng FROM {object} GROUP BY offense_type) WHERE
+      nc > 1 OR na > 1 OR ng > 1
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_constant_within_year_county
+    description: agencies_reporting describes the year's reporting roster for the geography, not the cell
+      — it must be identical on every row of a (year, county) group (and on every state row of a year).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, COUNT(DISTINCT agencies_reporting) AS n FROM
+      {object} GROUP BY year, county_fips) WHERE n > 1
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_at_least_one
+    description: Every county row's arrests come from at least one agency rostered to that county, and
+      every state row from at least one reporting agency.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NULL OR agencies_reporting < 1
+    mustBe: 0
+customProperties:
+- property: title
+  value: NIBRS Arrests by County
+- property: summary
+  value: Arrests reported by Georgia law-enforcement agencies (FBI NIBRS), by county, year, offense type,
+    arrest type, and arrestee demographic, 2018 onward.
+- property: source
+  value: FBI Crime Data Explorer, NIBRS master state extracts (Georgia)
+- property: source_url
+  value: https://cde.ucr.cjis.gov
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2018-2024
+- property: schema_hash
+  value: 0d53e28110e59527884506812de6de7288f4098f0a064b63e361b60bc54b5c58
+- property: available_years
+  value:
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

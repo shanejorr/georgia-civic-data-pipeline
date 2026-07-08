@@ -1,0 +1,426 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.placements
+name: placements
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Secure juvenile placements in Georgia Department of Juvenile Justice facilities by the youth''s
+    county of residence, 2010-2025, aggregated from the Georgia Juvenile Justice Data Clearinghouse''s
+    pseudonymized placement-level file. Per county, year, demographic group, and facility type (RYDC secure
+    detention / YDC secure confinement): new placements started in the year, placements active during
+    the year, and distinct youths held.'
+  usage: Attribute the Georgia Juvenile Justice Data Clearinghouse (juveniledata.georgiacourts.gov). Filter
+    demographic to one axis at a time ('all', the race values, or the gender values) AND facility_type
+    to one value ('all', 'rydc', or 'ydc'); use state rows for statewide figures instead of summing county
+    rows (distinct-youth counts are not additive, and out-of-state residents appear only in the state
+    rollup). Compare num_new_placements across years for trend analysis; num_placements and num_youth
+    are active-during-year measures that must not be summed across years.
+  limitations: 'State rows have NULL county_fips. The source publishes no suppression — metric values
+    are never NULL and zeros appear only in num_new_placements (a cell can hold only carried-over placements).
+    Counties are the youth''s county of RESIDENCE; youths labeled OUT OF STATE (~2.5% of placements) appear
+    only in state rows, so county figures sum slightly below the state row. num_new_placements slightly
+    overstates the official ''new instances'' measures because transfers between same-type facilities
+    are not detectable in the source. num_placements and num_youth count presence during the year, not
+    admissions — never sum them across years; num_youth is not additive along any axis. The panel is sparse:
+    an absent county-year-cell means no matching placements existed, not missing data. Offense detail
+    and length-of-stay statistics present in the source''s placement-level file are not served in this
+    dataset.'
+tags:
+- criminal_justice
+- georgia juvenile justice data clearinghouse
+- placements
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/placements/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/placements/**/*.parquet
+  format: parquet
+schema:
+- name: placements
+  logicalType: object
+  physicalType: parquet
+  physicalName: placements
+  description: placements fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, demographic, facility_type (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: juvenile_clearinghouse
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+    - facility_type
+  - property: key_metric
+    value: num_new_placements
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/placements/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), counties detail
+      query: SELECT * FROM placements WHERE year = 2025 LIMIT 100
+    - description: Filter by facility_type = rydc
+      query: SELECT * FROM placements WHERE facility_type = 'rydc' AND year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year the placement was ACTIVE (source 'Year'). A stay spanning multiple years
+      is counted in each year it was active, so num_placements and num_youth must never be summed across
+      years; num_new_placements attributes each placement to its admission year only.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the youth's COUNTY OF RESIDENCE (where
+      youths are from, not where the facility sits); FK to the counties dimension. NULL on state-level
+      rows. Youths whose residence the source labels OUT OF STATE (~2.5% of placement rows) carry no county
+      and appear only in the state rollup.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic slice. Three overlapping axes are packed into this column: ''all'' (every
+      youth), race (asian/black/hispanic/native_american/other/white), and gender (male/female) — filter
+      to one axis; summing across axes double-counts. Race values follow the source''s 6-bucket scheme:
+      hispanic is a mutually exclusive race-level bucket, and no Pacific Islander bucket exists anywhere
+      in the source — bare source ''Asian'' is mapped to asian as published (consistent with the decision_points
+      dataset from the same source), with any Pacific Islander youths most plausibly reported in the explicit
+      ''other'' catch-all. Each placement carries exactly one race and one gender, so placement counts
+      partition exactly across each axis; distinct-youth counts may not (a youth''s reported race could
+      differ across placements).'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian'
+    - 'black'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'native_american'
+    - 'other'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Youth group the row covers: every youth (all), one race group, or one gender group.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: facility_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Secure facility type: rydc (Regional Youth Detention Center — short-term, largely pre-adjudication
+      secure detention; ~96% of placements), ydc (Youth Development Campus — long-term post-commitment
+      secure confinement), or all (both types combined). The ''all'' rollup is served because num_youth
+      is NOT additive across facility types (a youth can be held in both an RYDC and a YDC in the same
+      year); placement counts DO partition exactly across rydc + ydc. 214 placements (~0.15%) at campuses
+      housing both facility types carried both labels in the source and were resolved to their modal type
+      (ties to rydc). Filter to one value; summing across all three double-counts.'
+    examples:
+    - 'rydc'
+    enum:
+    - 'all'
+    - 'rydc'
+    - 'ydc'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Facility Type
+    - property: short_description
+      value: 'Secure facility type: rydc (pre-adjudication detention), ydc (post-commitment confinement),
+        or all (both).'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_new_placements
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Placements whose admission date falls in the row''s year — the closest reconstruction
+      of the Clearinghouse''s official ''new instances of secure detention / secure confinement'' measures.
+      A placement is a distinct (youth, admission date, facility) stay. Slightly OVERSTATES the official
+      measure: the official definition excludes transfers between same-type facilities, which are not
+      detectable in the source (a transfer appears as a new stay at the receiving facility). Additive
+      across counties, race values, gender values, facility types, and years. 5 placements (from 10 bronze
+      rows: 3 with a missing admission date, 7 published as an impossible 01-01-1900 sentinel and NULLed)
+      are counted in num_placements but never here.'
+    examples:
+    - 42
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number New Placements
+    - property: short_description
+      value: Secure placements newly started in the year — new detention (rydc) or confinement (ydc) instances.
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: num_placements
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Distinct placements (youth x admission date x facility) ACTIVE at any point during the
+      year, including stays begun in earlier years. NOT additive across years (a multi-year stay is counted
+      in each year it was active); additive across counties, demographic values within one axis, and facility
+      types. Always >= num_new_placements and >= 1 (rows exist only where placements occurred).
+    examples:
+    - 64
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Placements
+    - property: unit
+      value: count
+  - name: num_youth
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Distinct youths (pseudonymized source IDs) held in the cell during the year. NOT additive
+      along any axis: a youth with placements in two counties, both facility types, or multiple years
+      counts once in each cell but once in the corresponding rollup — use the ''all'' facility row and
+      state rows for unduplicated totals.'
+    examples:
+    - 48
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Youth
+    - property: unit
+      value: count
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 9 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian', 'black', 'female', 'hispanic', 'male', 'native_american', 'other', 'white')
+    mustBe: 0
+  - type: sql
+    name: facility_type_in_allowed_values
+    description: facility_type is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE facility_type IS NOT NULL AND facility_type NOT IN ('all',
+      'rydc', 'ydc')
+    mustBe: 0
+  - type: sql
+    name: num_new_placements_non_negative
+    description: num_new_placements is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_new_placements IS NOT NULL AND num_new_placements <
+      0
+    mustBe: 0
+  - type: sql
+    name: num_placements_non_negative
+    description: num_placements is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_placements IS NOT NULL AND num_placements < 0
+    mustBe: 0
+  - type: sql
+    name: num_youth_non_negative
+    description: num_youth is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_youth IS NOT NULL AND num_youth < 0
+    mustBe: 0
+  - type: sql
+    name: new_placements_within_placements
+    description: Placements newly admitted in the year are a subset of placements active during it, so
+      num_new_placements must not exceed num_placements in any cell.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_new_placements IS NOT NULL AND num_placements IS NOT
+      NULL AND num_new_placements > num_placements
+    mustBe: 0
+  - type: sql
+    name: youth_within_placements
+    description: Every counted youth holds at least one placement in the cell, so num_youth must not exceed
+      num_placements.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_youth IS NOT NULL AND num_placements IS NOT NULL AND
+      num_youth > num_placements
+    mustBe: 0
+  - type: sql
+    name: cells_exist_only_where_activity
+    description: 'The source has no suppression and cells are emitted only where placements occurred:
+      all three metrics must be non-NULL and num_placements/num_youth at least 1 (num_new_placements may
+      be 0 for carried-over-only cells).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE num_new_placements IS NULL OR num_placements IS NULL OR
+      num_youth IS NULL OR num_placements < 1 OR num_youth < 1
+    mustBe: 0
+  - type: sql
+    name: facility_partition_num_placements
+    description: Each placement resolves to exactly one facility type, so per (year, county_fips, demographic)
+      the rydc + ydc rows' num_placements must sum to the facility_type='all' row. GROUP BY treats the
+      NULL county_fips of state rows as one group, so the invariant is enforced at both levels.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, demographic, MAX(CASE WHEN facility_type =
+      'all' THEN num_placements END) AS total, SUM(CASE WHEN facility_type IN ('rydc','ydc') THEN num_placements
+      END) AS split_sum FROM {object} GROUP BY year, county_fips, demographic) WHERE total IS NOT NULL
+      AND split_sum IS NOT NULL AND total != split_sum
+    mustBe: 0
+  - type: sql
+    name: facility_partition_num_new_placements
+    description: 'Same partition as facility_partition_num_placements for the headline metric: rydc +
+      ydc num_new_placements must sum to the facility_type=''all'' row.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, demographic, MAX(CASE WHEN facility_type =
+      'all' THEN num_new_placements END) AS total, SUM(CASE WHEN facility_type IN ('rydc','ydc') THEN
+      num_new_placements END) AS split_sum FROM {object} GROUP BY year, county_fips, demographic) WHERE
+      total IS NOT NULL AND split_sum IS NOT NULL AND total != split_sum
+    mustBe: 0
+  - type: sql
+    name: race_partition_num_placements
+    description: Each placement carries exactly one race value (guarded at transform time), so per (year,
+      county_fips, facility_type) the six race rows' num_placements must sum to the demographic='all'
+      row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, facility_type, MAX(CASE WHEN demographic =
+      'all' THEN num_placements END) AS total, SUM(CASE WHEN demographic IN ('asian','black','hispanic','native_american','other','white')
+      THEN num_placements END) AS race_sum FROM {object} GROUP BY year, county_fips, facility_type) WHERE
+      total IS NOT NULL AND race_sum IS NOT NULL AND total != race_sum
+    mustBe: 0
+  - type: sql
+    name: gender_partition_num_placements
+    description: Each placement carries exactly one gender value (guarded at transform time), so per (year,
+      county_fips, facility_type) the male + female rows' num_placements must sum to the demographic='all'
+      row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, facility_type, MAX(CASE WHEN demographic =
+      'all' THEN num_placements END) AS total, SUM(CASE WHEN demographic IN ('female','male') THEN num_placements
+      END) AS gender_sum FROM {object} GROUP BY year, county_fips, facility_type) WHERE total IS NOT NULL
+      AND gender_sum IS NOT NULL AND total != gender_sum
+    mustBe: 0
+  - type: sql
+    name: county_placements_within_state_total
+    description: Each placement belongs to exactly one residence county (or OUT OF STATE), so per (year,
+      demographic, facility_type) the county rows' num_placements must sum to AT MOST the state row (the
+      gap is exactly the out-of-state placements kept only in the state rollup).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, demographic, facility_type, MAX(CASE WHEN county_fips IS
+      NULL THEN num_placements END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN num_placements
+      END) AS county_sum FROM {object} GROUP BY year, demographic, facility_type) WHERE state_total IS
+      NOT NULL AND county_sum IS NOT NULL AND county_sum > state_total
+    mustBe: 0
+customProperties:
+- property: title
+  value: Juvenile Secure Placements
+- property: summary
+  value: Youths held in Georgia's secure juvenile facilities — RYDC detention and YDC confinement — with
+    new-placement, active-placement, and distinct-youth counts by county of residence, race, and gender,
+    2010-2025.
+- property: source
+  value: Georgia Juvenile Justice Data Clearinghouse
+- property: source_url
+  value: https://juveniledata.georgiacourts.gov/dashboards-reports/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2010-2025
+- property: schema_hash
+  value: 3985a0e412e2f7b7d5c9af19d788d53c64299b731999313555f5d3eb4a0d56bc
+- property: available_years
+  value:
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

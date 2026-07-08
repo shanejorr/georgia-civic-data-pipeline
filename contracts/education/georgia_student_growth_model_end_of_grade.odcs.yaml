@@ -1,0 +1,533 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.georgia_student_growth_model_end_of_grade
+name: georgia_student_growth_model_end_of_grade
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Student Growth Model (GSGM / SGP) on End-of-Grade (EOG) Milestones assessments. Each
+    row is a (year x detail_level x geography x subject x grade) cohort''s growth-related measures: Median
+    Student Growth Percentile (1-99 ordinal), share of students at or above Typical growth (SGP >= 35),
+    and (in 2023 only) a three-bucket SGP split (Low < 35, Typical 35-65, High > 65). 2015-2019 also report
+    achievement-level percentages (Proficient / Developing Learner and above) on the underlying EOG assessment.
+    Data covers reporting years 2015, 2016, 2017, 2018, 2019, and 2023. No GSGM was reported during COVID
+    years 2020-2022. 2015-2016 report four subjects (ELA, Math, Science, Social Studies); 2017-2019 report
+    only ELA + Math; 2023 reports only ELA + Math.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- georgia_student_growth_model_end_of_grade
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/georgia_student_growth_model_end_of_grade/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/georgia_student_growth_model_end_of_grade/**/*.parquet
+  format: parquet
+schema:
+- name: georgia_student_growth_model_end_of_grade
+  logicalType: object
+  physicalType: parquet
+  physicalName: georgia_student_growth_model_end_of_grade
+  description: georgia_student_growth_model_end_of_grade fact table, year-partitioned Parquet (split by
+    detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, grade_level, subject (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - grade_level
+    - subject
+  - property: key_metric
+    value: sgp_median
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/georgia_student_growth_model_end_of_grade/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2023), schools detail
+      query: SELECT * FROM georgia_student_growth_model_end_of_grade WHERE year = 2023 LIMIT 100
+    - description: District 601 in 2023
+      query: SELECT * FROM georgia_student_growth_model_end_of_grade WHERE district_code = '601' AND year
+        = 2023 LIMIT 100
+    - description: Filter by grade_level = 04
+      query: SELECT * FROM georgia_student_growth_model_end_of_grade WHERE grade_level = '04' AND year
+        = 2023 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (spring year). E.g., 2017 = school year 2016-2017.
+      Data published years are 2015, 2016, 2017, 2018, 2019, 2023.
+    examples:
+    - 2017
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district/system code (FK to districts dimension). 7-digit charter / state-school
+      codes are preserved in full; 2015-2017 school-level rows published under the bare charter SYSTEM
+      codes 782/783 are promoted to the 7-digit campus code (system + school code) used by 2018+ files.
+      NULL for state-level rows.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (FK to schools dimension, composite with district_code). NULL
+      for district- and state-level rows.
+    examples:
+    - '0177'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: grade_level
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Grade level as a zero-padded 2-char string categorical, matching the rest of the per-grade
+      education topics. Per-grade rows carry `"04"`-`"08"` (EOG SGP is only reported for grades 4-8 because
+      an SGP requires a prior-year score, and grade 3 is the first tested grade). The published AllGrades
+      aggregate (2015-2019 only) is preserved as `"all"` because its `sgp_median` cannot be reconstructed
+      from the per-grade medians — analogous to the `"all"` value used in the `demographic` column for
+      cross-demographic aggregates. 2023 has no AllGrades row in bronze.
+    examples:
+    - '04'
+    enum:
+    - 'all'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Level
+    - property: short_description
+      value: Grade tested, 04 through 08 (grade 3 has no prior score for growth); 'all' is the across-grades
+        aggregate.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: subject
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Snake-case subject label. 2015-2016 report four subjects (english_language_arts, mathematics,
+      science, social_studies); 2017+ reports only english_language_arts and mathematics.
+    examples:
+    - 'english_language_arts'
+    enum:
+    - 'english_language_arts'
+    - 'mathematics'
+    - 'science'
+    - 'social_studies'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Subject
+    - property: short_description
+      value: The content area tested (english_language_arts, mathematics, science, social_studies).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: num_tested
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students who took the EOG assessment. NULL in 2023 (Era 6 does not report this
+      column — see bronze-data-structure.md §Era 6).
+    examples:
+    - 180
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested
+    - property: unit
+      value: count
+  - name: num_sgp_received
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students with enough prior-year scores to receive a Student Growth Percentile
+      (subset of num_tested in 2015-2019; the only count metric reported in 2023).
+    examples:
+    - 176
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number SGP Received
+    - property: unit
+      value: count
+    - property: metric_component
+      value: denominator
+  - name: sgp_received_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of tested students who received an SGP (num_sgp_received / num_tested). 0-1 decimal
+      scale. NULL in 2023 (not reported).
+    examples:
+    - 0.98
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: SGP Received Rate
+    - property: unit
+      value: proportion
+  - name: sgp_median
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Median Student Growth Percentile on the 1-99 ordinal scale (the true SGP domain — there
+      is no 0 or 100 SGP, so the range guard is tightened from the percentile default [0, 100] to [1,
+      99]). NOT converted to 0-1 — it''s a percentile rank, preserved verbatim per data-cleaning-standards
+      §4. Statewide median is 50 by construction. Values can be `.5` halves (e.g., 44.5). NULL on empty-cohort
+      rows (num_sgp_received == 0): a median is undefined with no students, and bronze''s sentinel 0 there
+      is outside the valid 1-99 scale, so it is nulled rather than carried (which is why the tightened
+      [1, 99] guard holds). The mask is recorded in the transform manifest (masked_values).'
+    examples:
+    - 47.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: SGP Median
+    - property: short_description
+      value: Median student growth percentile (1-99); 50 is average growth, higher means faster growth
+        than similar peers.
+    - property: unit
+      value: percentile
+    - property: value_min
+      value: 1
+    - property: value_max
+      value: 99
+    - property: key_metric
+      value: true
+  - name: pct_proficient_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of students at the Proficient Learner achievement level or higher on the EOG assessment
+      (0-1 scale; bronze / 100). NULL in 2023 (metric dropped).
+    examples:
+    - 0.27
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Proficient Learner or Above
+    - property: unit
+      value: proportion
+  - name: pct_developing_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of students at the Developing Learner achievement level or higher on the EOG assessment
+      (0-1 scale; bronze / 100). NULL in 2023 (metric dropped).
+    examples:
+    - 0.65
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Developing Learner or Above
+    - property: unit
+      value: proportion
+  - name: pct_sgp_typical_or_high_growth
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of SGP-scored students with SGP >= 35 (Typical or High growth). 0-1 scale. NULL
+      in 2023 — Era 6 replaced this with the three-bucket SGP split below.
+    examples:
+    - 0.63
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent SGP Typical or High Growth
+    - property: unit
+      value: proportion
+  - name: pct_sgp_low_growth
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of SGP-scored students in the Low Growth band (SGP < 35). 0-1 scale. Era 6 (2023)
+      only; NULL for 2015-2019.
+    examples:
+    - 0.34
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent SGP Low Growth
+    - property: unit
+      value: proportion
+  - name: pct_sgp_typical_growth
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of SGP-scored students in the Typical Growth band (35 <= SGP <= 65). 0-1 scale.
+      Era 6 only; NULL for 2015-2019. NOT the same as pct_sgp_typical_or_high_growth — Era 1-5's `% Typical
+      or High` lumps typical and high together (SGP >= 35).
+    examples:
+    - 0.31
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent SGP Typical Growth
+    - property: unit
+      value: proportion
+  - name: pct_sgp_high_growth
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of SGP-scored students in the High Growth band (SGP > 65). 0-1 scale. Era 6 only;
+      NULL for 2015-2019.
+    examples:
+    - 0.34
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent SGP High Growth
+    - property: unit
+      value: proportion
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: grade_level_in_allowed_values
+    description: grade_level is one of the 6 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_level IS NOT NULL AND grade_level NOT IN ('all',
+      '04', '05', '06', '07', '08')
+    mustBe: 0
+  - type: sql
+    name: subject_in_allowed_values
+    description: subject is one of the 4 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE subject IS NOT NULL AND subject NOT IN ('english_language_arts',
+      'mathematics', 'science', 'social_studies')
+    mustBe: 0
+  - type: sql
+    name: num_tested_non_negative
+    description: num_tested is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested < 0
+    mustBe: 0
+  - type: sql
+    name: num_sgp_received_non_negative
+    description: num_sgp_received is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_sgp_received IS NOT NULL AND num_sgp_received < 0
+    mustBe: 0
+  - type: sql
+    name: sgp_received_rate_within_unit_interval
+    description: sgp_received_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE sgp_received_rate IS NOT NULL AND (sgp_received_rate <
+      0 OR sgp_received_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: sgp_median_within_range
+    description: sgp_median is within its declared [1, 99] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE sgp_median IS NOT NULL AND (sgp_median < 1 OR sgp_median
+      > 99)
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_learner_or_above_within_unit_interval
+    description: pct_proficient_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND (pct_proficient_learner_or_above
+      < 0 OR pct_proficient_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_developing_learner_or_above_within_unit_interval
+    description: pct_developing_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner_or_above IS NOT NULL AND (pct_developing_learner_or_above
+      < 0 OR pct_developing_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_sgp_typical_or_high_growth_within_unit_interval
+    description: pct_sgp_typical_or_high_growth is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_typical_or_high_growth IS NOT NULL AND (pct_sgp_typical_or_high_growth
+      < 0 OR pct_sgp_typical_or_high_growth > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_sgp_low_growth_within_unit_interval
+    description: pct_sgp_low_growth is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_low_growth IS NOT NULL AND (pct_sgp_low_growth
+      < 0 OR pct_sgp_low_growth > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_sgp_typical_growth_within_unit_interval
+    description: pct_sgp_typical_growth is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_typical_growth IS NOT NULL AND (pct_sgp_typical_growth
+      < 0 OR pct_sgp_typical_growth > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_sgp_high_growth_within_unit_interval
+    description: pct_sgp_high_growth is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_high_growth IS NOT NULL AND (pct_sgp_high_growth
+      < 0 OR pct_sgp_high_growth > 1)
+    mustBe: 0
+  - type: sql
+    name: num_sgp_received_le_num_tested
+    description: Students receiving an SGP are a subset of those tested, so num_sgp_received <= num_tested
+      where both are present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_sgp_received IS NOT NULL AND num_tested IS NOT NULL
+      AND num_sgp_received > num_tested
+    mustBe: 0
+  - type: sql
+    name: sgp_received_rate_matches_counts
+    description: sgp_received_rate equals num_sgp_received / num_tested (+/-0.02 for publisher rounding)
+      where the counts and the rate are all present and num_tested > 0.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE sgp_received_rate IS NOT NULL AND num_sgp_received IS NOT
+      NULL AND num_tested IS NOT NULL AND num_tested > 0 AND ABS(sgp_received_rate - (CAST(num_sgp_received
+      AS DOUBLE) / num_tested)) > 0.02
+    mustBe: 0
+  - type: sql
+    name: proficient_le_developing_or_above
+    description: Proficient-or-above is nested within Developing-or-above, so pct_proficient_learner_or_above
+      <= pct_developing_learner_or_above where both are present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND pct_developing_learner_or_above
+      IS NOT NULL AND pct_proficient_learner_or_above > pct_developing_learner_or_above + 0.0001
+    mustBe: 0
+  - type: sql
+    name: sgp_growth_bands_sum_to_one
+    description: The three 2023 SGP growth bands (Low, Typical, High) partition the SGP-scored students
+      and sum to 1.0 (+/-0.02) where all three are present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_low_growth IS NOT NULL AND pct_sgp_typical_growth
+      IS NOT NULL AND pct_sgp_high_growth IS NOT NULL AND ABS(pct_sgp_low_growth + pct_sgp_typical_growth
+      + pct_sgp_high_growth - 1.0) > 0.02
+    mustBe: 0
+customProperties:
+- property: title
+  value: Student Growth Model (SGM) End-of-Grade Results
+- property: summary
+  value: Student growth percentiles on Georgia Milestones grades 4-8 tests by school, district, grade,
+    and subject, 2015-2023.
+- property: source
+  value: Georgia Insights (GaDOE) — Georgia Student Growth Model on End-of-Grade Milestones assessments
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2015-2023
+- property: schema_hash
+  value: b96869f8e00ff393b0217be9b9e2b932b47f4c1b9d4ac90c24617d90fe5a912f
+- property: available_years
+  value:
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2023
+- property: year_gaps
+  value:
+  - 2020
+  - 2021
+  - 2022

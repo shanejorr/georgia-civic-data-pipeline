@@ -1,0 +1,448 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.certified_personnel
+name: certified_personnel
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Office of Student Achievement (GOSA) Certified Personnel dataset, compiled from local
+    school systems'' Certified/Classified Personnel Information (CPI) submissions. For every Georgia public
+    school, school district, and the state as a whole, publishes a complete grid of 27 staffing measurements
+    per employee group (81 rows per entity-year): headcount by certificate level (Bachelor''s through
+    Doctoral, plus Other), certification status (Professional / Provisional), gender, employment status
+    (Full/Part-time), position metrics (FTE position count, average annual/daily salary, average contract
+    days), staff race/ethnicity, and years-of-experience bands (<1, 1-10, 11-20, 21-30, >30, plus the
+    mean). The three employee groups are Administrators, PK-12 Teachers, and Support Personnel; coverage
+    runs from the 2010-11 school year through 2023-24.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'This source has no suppression markers in any year (2010-11 through 2023-24); zero counts
+    are published as real `0` values, and every bronze MEASURE value parses to a valid number. measure_value
+    has heterogeneous units that depend on (measure_category, measure_subcategory): a whole-person headcount
+    for certificate_level / certified_personnel / gender / personnel / race_ethnicity / years_experience
+    (except `average`); an FTE-style fractional count for positions/number; US dollars for positions/average_annual_salary
+    and positions/average_daily_salary; days for positions/average_contract_days; and a mean in years
+    for years_experience/average. Never aggregate measure_value without first filtering to a single (measure_category,
+    measure_subcategory) pair, and never sum `average*` labels across entities. measure_category is functionally
+    determined by measure_subcategory (27 valid pairs). There is no `demographic` column: gender and race/ethnicity
+    here describe STAFF and are measure families, not a cross-cutting demographic axis, so these rows
+    do not join the demographics dimension; the race_ethnicity family uses the pre-1997 OMB combined `asian_pacific_islander`
+    bucket (no separate Pacific Islander label exists in the source). Known source quirk: the 2016-17
+    certified_personnel family (professional/provisional counts) is uniformly depressed at every level
+    (~2% of adjacent years'' magnitude) yet internally consistent across levels — preserved as published;
+    do not trend that family across 2017. School rows must not be summed to rebuild district or state
+    headcounts: staff serving multiple schools are counted once per school assignment but deduplicated
+    at higher levels, so a district count can even be smaller than a single school''s count (observed
+    only in personnel/part_time; 1,811 cells). State rows have NULL district_code and school_code; district
+    rows have NULL school_code.'
+tags:
+- education
+- governor's office of student achievement
+- certified_personnel
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/certified_personnel/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/certified_personnel/**/*.parquet
+  format: parquet
+schema:
+- name: certified_personnel
+  logicalType: object
+  physicalType: parquet
+  physicalName: certified_personnel
+  description: certified_personnel fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, employee_type, measure_category,
+    measure_subcategory (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - employee_type
+    - measure_category
+    - measure_subcategory
+  - property: key_metric
+    value: measure_value
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/certified_personnel/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM certified_personnel WHERE year = 2024 LIMIT 100
+    - description: District 644 in 2024
+      query: SELECT * FROM certified_personnel WHERE district_code = '644' AND year = 2024 LIMIT 100
+    - description: Filter by employee_type = pk_12_teachers
+      query: SELECT * FROM certified_personnel WHERE employee_type = 'pk_12_teachers' AND year = 2024
+        LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year. Year 2024 = 2023-2024 school year. Derived from
+      the bronze `LONG_SCHOOL_YEAR` column's ending year.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to the education districts dimension): 3-digit zero-padded for
+      standard districts, 7-digit for state/commission charter schools (present from 2012 onward). NULL
+      for state-level aggregate rows (the bronze sentinel `ALL`).'
+    examples:
+    - '644'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit zero-padded GOSA school code (FK to the education schools dimension, composite
+      key with district_code). NULL for district-level and state-level aggregate rows (the bronze sentinel
+      `ALL`).
+    examples:
+    - '0189'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: employee_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Employee group this measurement covers. Snake_case recode of bronze EMPLOYEE_TYPE: `administrators`,
+      `pk_12_teachers`, `support_personnel`.'
+    examples:
+    - 'pk_12_teachers'
+    enum:
+    - 'administrators'
+    - 'pk_12_teachers'
+    - 'support_personnel'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Employee Type
+    - property: short_description
+      value: 'Which staff group the measurement covers: administrators, PK-12 teachers, or support personnel.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: measure_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: High-level family of the measurement. Snake_case recode of bronze DATA_CATEGORY. Together
+      with `measure_subcategory` it fully identifies what `measure_value` represents; the family is functionally
+      determined by the label (27 valid pairs, enforced by a quality check).
+    examples:
+    - 'race_ethnicity'
+    enum:
+    - 'certificate_level'
+    - 'certified_personnel'
+    - 'gender'
+    - 'personnel'
+    - 'positions'
+    - 'race_ethnicity'
+    - 'years_experience'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Measure Category
+    - property: short_description
+      value: The category of staffing measure (e.g. certificate level, gender, positions, race/ethnicity,
+        years of experience); pairs with measure_subcategory.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: measure_subcategory
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Specific measurement within the family. Snake_case recode of bronze DATA_SUB_CATEGORY
+      — e.g. `5_yr_masters` (family `certificate_level`), `average_annual_salary` (family `positions`),
+      `less_than_1` / `average` (family `years_experience`). `other` is the fifth CERTIFICATE LEVEL bucket
+      (bronze `Other *`; the asterisk flags a source footnote), not a race value. `asian_pacific_islander`
+      is the bronze staff-race label `Asian`: the source publishes only 6 race buckets with no separate
+      Pacific Islander label in any year, and state-level race-bucket sums equal the gender-bucket sums
+      (same population) — the pre-1997 OMB combined Asian + Pacific Islander bucket per data-cleaning-standards
+      §5b.'
+    examples:
+    - '5_yr_masters'
+    enum:
+    - '11_to_20'
+    - '1_to_10'
+    - '21_to_30'
+    - '4_yr_bachelors'
+    - '5_yr_masters'
+    - '6_yr_specialists'
+    - '7_yr_doctoral'
+    - 'asian_pacific_islander'
+    - 'average'
+    - 'average_annual_salary'
+    - 'average_contract_days'
+    - 'average_daily_salary'
+    - 'black'
+    - 'female'
+    - 'full_time'
+    - 'greater_than_30'
+    - 'hispanic'
+    - 'less_than_1'
+    - 'male'
+    - 'multiracial'
+    - 'native_american'
+    - 'number'
+    - 'other'
+    - 'part_time'
+    - 'professional'
+    - 'provisional'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Measure Subcategory
+    - property: short_description
+      value: The specific staffing measure within its family (e.g. 5_yr_masters, average_annual_salary,
+        full_time); defines what measure_value means and its unit.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: measure_value
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Numeric value of the measurement. UNITS DEPEND ON (measure_category, measure_subcategory):
+      a whole-person headcount for the 22 count labels (all of certificate_level, certified_personnel,
+      gender, personnel, race_ethnicity, and the five years_experience bands); an FTE-style fractional
+      position count for positions/number; US dollars for positions/average_annual_salary and positions/average_daily_salary;
+      days for positions/average_contract_days; years (0.01 precision) for years_experience/average. NEVER
+      sum or average across rows without first filtering to a single (measure_category, measure_subcategory)
+      pair — and never sum `average*` labels across entities at all. No `unit` marker is declared because
+      the unit varies by row; range invariants are enforced by quality checks instead (non-negative everywhere;
+      headcount labels integral; experience average within [0, 60]; contract days within [0, 366]). Known
+      source quirk preserved per §4b (extreme-but-conceivable): in the 2016-17 file ONLY, the certified_personnel
+      family (professional/provisional) is uniformly depressed at every level (state professional PK-12
+      teachers = 2,689 vs ~110,000 in adjacent years) yet internally consistent (district sum 2,690; school
+      sum 2,748) — a GOSA scope/definition glitch for that family-year, served as published.'
+    examples:
+    - 42.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Measure Value
+    - property: short_description
+      value: The measurement's value; its unit (headcount, FTE, dollars, days, or years) depends on measure_category
+        and measure_subcategory, so filter to one pair before aggregating.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: employee_type_in_allowed_values
+    description: employee_type is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE employee_type IS NOT NULL AND employee_type NOT IN ('administrators',
+      'pk_12_teachers', 'support_personnel')
+    mustBe: 0
+  - type: sql
+    name: measure_category_in_allowed_values
+    description: measure_category is one of the 7 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE measure_category IS NOT NULL AND measure_category NOT IN
+      ('certificate_level', 'certified_personnel', 'gender', 'personnel', 'positions', 'race_ethnicity',
+      'years_experience')
+    mustBe: 0
+  - type: sql
+    name: measure_subcategory_in_allowed_values
+    description: measure_subcategory is one of the 27 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE measure_subcategory IS NOT NULL AND measure_subcategory
+      NOT IN ('11_to_20', '1_to_10', '21_to_30', '4_yr_bachelors', '5_yr_masters', '6_yr_specialists',
+      '7_yr_doctoral', 'asian_pacific_islander', 'average', 'average_annual_salary', 'average_contract_days',
+      'average_daily_salary', 'black', 'female', 'full_time', 'greater_than_30', 'hispanic', 'less_than_1',
+      'male', 'multiracial', 'native_american', 'number', 'other', 'part_time', 'professional', 'provisional',
+      'white')
+    mustBe: 0
+  - type: sql
+    name: measure_category_subcategory_valid_pair
+    description: 'measure_category is functionally determined by measure_subcategory: every (measure_category,
+      measure_subcategory) combination is one of the 27 valid pairs published by GOSA (verified identical
+      in all 14 bronze years).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (measure_category, measure_subcategory) NOT IN (('certificate_level',
+      '4_yr_bachelors'), ('certificate_level', '5_yr_masters'), ('certificate_level', '6_yr_specialists'),
+      ('certificate_level', '7_yr_doctoral'), ('certificate_level', 'other'), ('certified_personnel',
+      'professional'), ('certified_personnel', 'provisional'), ('gender', 'female'), ('gender', 'male'),
+      ('personnel', 'full_time'), ('personnel', 'part_time'), ('positions', 'number'), ('positions', 'average_annual_salary'),
+      ('positions', 'average_daily_salary'), ('positions', 'average_contract_days'), ('race_ethnicity',
+      'asian_pacific_islander'), ('race_ethnicity', 'black'), ('race_ethnicity', 'hispanic'), ('race_ethnicity',
+      'multiracial'), ('race_ethnicity', 'native_american'), ('race_ethnicity', 'white'), ('years_experience',
+      'less_than_1'), ('years_experience', '1_to_10'), ('years_experience', '11_to_20'), ('years_experience',
+      '21_to_30'), ('years_experience', 'greater_than_30'), ('years_experience', 'average'))
+    mustBe: 0
+  - type: sql
+    name: measure_value_non_negative
+    description: Every measurement in this dataset (headcounts, FTE position counts, salary/contract-day/experience
+      averages) is non-negative. Replaces the unit-derived range check that the unit-less measure_value
+      column would otherwise lack; verified with zero violations across all 3,120,633 bronze values.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE measure_value IS NOT NULL AND measure_value < 0
+    mustBe: 0
+  - type: sql
+    name: headcount_measure_subcategories_integral
+    description: 'The 22 headcount labels (everything except the FTE-style positions/number count, the
+      three positions averages, and years_experience/average) carry whole-person integer counts. Verified:
+      zero fractional values across all 14 bronze years.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE measure_subcategory NOT IN ('number', 'average_annual_salary',
+      'average_daily_salary', 'average_contract_days', 'average') AND measure_value IS NOT NULL AND measure_value
+      <> FLOOR(measure_value)
+    mustBe: 0
+  - type: sql
+    name: years_experience_average_within_range
+    description: 'Mean years of experience (years_experience/average) lies within [0, 60] — a 60-year
+      career is the conceivable extreme. Observed bronze range across all years: [0, 50].'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE measure_subcategory = 'average' AND measure_value IS NOT
+      NULL AND (measure_value < 0 OR measure_value > 60)
+    mustBe: 0
+  - type: sql
+    name: average_contract_days_within_range
+    description: 'Average contract days (positions/average_contract_days) lies within [0, 366] — a contract
+      cannot exceed a year. Observed bronze range across all years: [30, 260].'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE measure_subcategory = 'average_contract_days' AND measure_value
+      IS NOT NULL AND (measure_value < 0 OR measure_value > 366)
+    mustBe: 0
+  - type: sql
+    name: state_rows_exactly_81_per_year
+    description: 'Structural fact: every year carries exactly 81 state-level rows (27 measure pairs x
+      3 employee types). Verified in all 14 bronze years.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL GROUP BY year HAVING
+      COUNT(*) <> 81) AS bad
+    mustBe: 0
+  - type: sql
+    name: complete_27_label_grid_per_cell
+    description: 'Structural fact: every (year, geography, employee_type) cell carries the complete grid
+      of exactly 27 rows with 27 distinct measure_subcategories — GOSA publishes the full measurement
+      grid for every entity (zeros included, nothing suppressed). Verified in all 14 bronze years. GROUP
+      BY treats NULL geography keys as equal, so the check self-scopes to each detail level.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, employee_type FROM {object}
+      GROUP BY year, district_code, school_code, employee_type HAVING COUNT(*) <> 27 OR COUNT(DISTINCT
+      measure_subcategory) <> 27) AS bad
+    mustBe: 0
+customProperties:
+- property: title
+  value: Certified Personnel (Teachers and Staff Credentials)
+- property: summary
+  value: Staffing measures for Georgia school teachers, administrators, and support staff -- credentials,
+    experience, salary, and demographics by school, district, and state, 2011-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2011-2024
+- property: schema_hash
+  value: 633b96090a2792fe052c99466bdd345e4c4ae3544d81242a4d2c2f7411a961ea
+- property: available_years
+  value:
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

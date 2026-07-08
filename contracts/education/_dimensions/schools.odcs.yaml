@@ -1,0 +1,120 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education._dimensions.schools
+name: schools
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Education schools dimension. One row per (district_code, school_code) pair with the school's
+    latest name.
+  usage: Join from an education fact table on BOTH district_code AND school_code (the composite key) to
+    attach school_name. Joining on school_code alone is incorrect -- school codes are not globally unique.
+  limitations: Latest name only (no slowly-changing history). school_code is not globally unique; always
+    join on the composite key.
+tags:
+- education
+- dimension
+- schools
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/_dimensions/schools.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/_dimensions/schools.parquet
+  format: parquet
+schema:
+- name: schools
+  logicalType: object
+  physicalType: parquet
+  physicalName: schools
+  description: Schools dimension table; single (non-partitioned) Parquet file. Composite primary key (district_code,
+    school_code).
+  dataGranularityDescription: One row per (district_code, school_code) pair.
+  customProperties:
+  - property: entity_kind
+    value: dimension
+  - property: scope
+    value: domain
+  - property: physical_basename
+    value: schools
+  - property: composite_key_note
+    value: school_code is NOT globally unique -- the same 4-digit code (e.g. 0101) recurs across districts.
+      The primary key is the (district_code, school_code) pair.
+  properties:
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: true
+    description: GOSA district code (zero-padded). Composite primary key part 1 and FK to the districts
+      dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: key
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 4-digit GOSA school code (zero-padded). Composite primary key part 2. NOT globally unique
+      on its own.
+    examples:
+    - '0103'
+    customProperties:
+    - property: column_role
+      value: key
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_name
+    logicalType: string
+    physicalType: string
+    required: false
+    description: School name in title case (latest name; no history).
+    examples:
+    - Centennial High School
+    customProperties:
+    - property: column_role
+      value: attribute
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dimension has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: district_code_not_null
+    description: Primary-key column district_code is never NULL.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL
+    mustBe: 0
+  - type: sql
+    name: school_code_not_null
+    description: Primary-key column school_code is never NULL.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE school_code IS NULL
+    mustBe: 0
+  - type: sql
+    name: primary_key_unique
+    description: The primary key (district_code, school_code) is unique (no duplicate rows).
+    dimension: uniqueness
+    query: SELECT COUNT(*) FROM (SELECT district_code, school_code FROM {object} GROUP BY district_code,
+      school_code HAVING COUNT(*) > 1)
+    mustBe: 0
+  - type: sql
+    name: school_code_is_4_char
+    description: school_code is a 4-character zero-padded code.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE school_code IS NOT NULL AND LENGTH(school_code) != 4
+    mustBe: 0
+customProperties:
+- property: schema_hash
+  value: 48c440af45efb5a196a6f65bee03829d0d47f9570392c0138f0e9b37c614b43f

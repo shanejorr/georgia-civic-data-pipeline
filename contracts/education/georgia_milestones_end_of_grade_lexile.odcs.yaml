@@ -1,0 +1,412 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.georgia_milestones_end_of_grade_lexile
+name: georgia_milestones_end_of_grade_lexile
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Lexile reading-score outcomes for Georgia public-school students taking the Georgia Milestones
+    End-of-Grade (EOG) English Language Arts assessment in grades 3-8. Each row is one (entity x grade)
+    cell reporting students tested, students who received a Lexile measure, students whose Lexile met
+    or exceeded the grade-band stretch midpoint (a national reading-level benchmark), students without
+    a Lexile score, and the average Lexile measure. State, district, and school detail levels; no demographic
+    breakdown (every row is implicitly All Students). School years 2014-15 through 2023-24; 2019-20 is
+    absent (EOG testing suspended, COVID-19).
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- governor's office of student achievement
+- georgia_milestones_end_of_grade_lexile
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/georgia_milestones_end_of_grade_lexile/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/georgia_milestones_end_of_grade_lexile/**/*.parquet
+  format: parquet
+schema:
+- name: georgia_milestones_end_of_grade_lexile
+  logicalType: object
+  physicalType: parquet
+  physicalName: georgia_milestones_end_of_grade_lexile
+  description: georgia_milestones_end_of_grade_lexile fact table, year-partitioned Parquet (split by detail
+    level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, grade_level, subject (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - grade_level
+    - subject
+  - property: key_metric
+    value: avg_lexile_score
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/georgia_milestones_end_of_grade_lexile/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM georgia_milestones_end_of_grade_lexile WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM georgia_milestones_end_of_grade_lexile WHERE district_code = '601' AND year
+        = 2024 LIMIT 100
+    - description: Filter by grade_level = 04
+      query: SELECT * FROM georgia_milestones_end_of_grade_lexile WHERE grade_level = '04' AND year =
+        2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (e.g., 2024 = 2023-24), from the filename and
+      cross-checked against the file's SCHOOL_YEAR column. 2020 has no rows (EOG testing suspended during
+      COVID-19 closures).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded standard codes or
+      7-digit state-charter codes. NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). NULL on district- and state-level rows.
+    examples:
+    - '0200'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: grade_level
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Grade the EOG ELA assessment was administered to, as a canonical 2-char zero-padded string
+      (03-08; EOG covers grades 3-8 only). Bronze ACDMC_LVL_CD is already zero-padded in every year.
+    examples:
+    - '04'
+    enum:
+    - '03'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Level
+    - property: short_description
+      value: Grade the EOG ELA assessment was given to, as a 2-char code (03-08; EOG covers grades 3-8).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: subject
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Academic subject. Fixed constant english_language_arts: every Lexile measure derives
+      from the EOG English Language Arts assessment (bronze has no subject column). Included for canonical-vocabulary
+      parity with sibling Milestones assessment topics so API consumers can filter by subject uniformly.'
+    examples:
+    - 'english_language_arts'
+    enum:
+    - 'english_language_arts'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Subject
+    - property: short_description
+      value: Academic subject; always english_language_arts (Lexile measures exist only for the EOG ELA
+        test).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: num_tested
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of students who took the EOG ELA assessment in this cell. Bronze TOTAL_STUDENTS_TESTED.
+      NULL when suppressed (TFS, 2021+) or genuinely empty in the source (every 2015-2019 file, 126-141
+      cells per year).
+    examples:
+    - 132
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: '2015-2019: genuinely empty source cell; 2021+: GOSA TFS (too few students) suppression.'
+  - name: num_with_lexile
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of tested students who received a usable Lexile measure; never exceeds num_tested
+      (verified, authored as a quality check). Bronze STUDENTS_WITH_LEXILE. NULL when suppressed.
+    examples:
+    - 132
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number with Lexile
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: '2015-2019: genuinely empty source cell; 2021+: GOSA TFS (too few students) suppression.'
+    - property: metric_component
+      value: denominator
+  - name: num_at_or_above_lexile_midpoint
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of students whose Lexile measure was at or above the grade-band stretch midpoint
+      (GOSA's on-track-reader threshold). A raw COUNT, not a percentage — to derive the share, divide
+      by num_with_lexile (the population with a valid Lexile), not num_tested. Never exceeds num_with_lexile
+      (verified, authored as a quality check). Bronze LEXILE_ON_OR_ABOVE_MIDPOINT. NULL when suppressed.
+    examples:
+    - 19
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number at or Above Lexile Midpoint
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: '2015-2019: genuinely empty source cell; 2021+: GOSA TFS (too few students) suppression.'
+  - name: num_without_lexile
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Count of tested students who did not receive a Lexile measure. Bronze NO_LEXILE_SCORE.
+      From 2021 onward ~99% of cells are TFS-suppressed (few students at any school lack a Lexile), so
+      the column is ~99% NULL post-COVID; retained for pre-2020 comparability. CAVEAT: num_with_lexile
+      + num_without_lexile does NOT reliably equal num_tested — small +/- discrepancies exist in every
+      year, and 2023/2024 state- and district-level rows fall short by thousands (the published aggregate
+      does not reconcile); published values are preserved exactly.'
+    examples:
+    - 3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Without Lexile
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: '2015-2019: genuinely empty source cell; 2021+: GOSA TFS suppression (~99%% of rows from
+        2021 onward).'
+  - name: avg_lexile_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Average Lexile reading measure among students who received one, to one decimal place
+      on the natural Lexile scale (observed 300.0-1435.0 across all years; the contract enforces 0-2000
+      — a Beginning-Reader BR floor below 0 is unreachable by a school/grade average). NOT a percentage;
+      never rescaled. Bronze AVG_LEXILE_SCORE. NULL when suppressed.
+    examples:
+    - 607.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Lexile Score
+    - property: short_description
+      value: Average Lexile reading measure among students who got one, on the natural Lexile scale; not
+        a percentage.
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 2000
+    - property: null_meaning
+      value: '2015-2019: genuinely empty source cell; 2021+: GOSA TFS (too few students) suppression.'
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: grade_level_in_allowed_values
+    description: grade_level is one of the 6 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_level IS NOT NULL AND grade_level NOT IN ('03', '04',
+      '05', '06', '07', '08')
+    mustBe: 0
+  - type: sql
+    name: subject_in_allowed_values
+    description: subject is one of the 1 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE subject IS NOT NULL AND subject NOT IN ('english_language_arts')
+    mustBe: 0
+  - type: sql
+    name: num_tested_non_negative
+    description: num_tested is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested < 0
+    mustBe: 0
+  - type: sql
+    name: num_with_lexile_non_negative
+    description: num_with_lexile is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_with_lexile IS NOT NULL AND num_with_lexile < 0
+    mustBe: 0
+  - type: sql
+    name: num_at_or_above_lexile_midpoint_non_negative
+    description: num_at_or_above_lexile_midpoint is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_at_or_above_lexile_midpoint IS NOT NULL AND num_at_or_above_lexile_midpoint
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_without_lexile_non_negative
+    description: num_without_lexile is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_without_lexile IS NOT NULL AND num_without_lexile <
+      0
+    mustBe: 0
+  - type: sql
+    name: avg_lexile_score_within_range
+    description: avg_lexile_score is within its declared [0, 2000] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_lexile_score IS NOT NULL AND (avg_lexile_score < 0
+      OR avg_lexile_score > 2000)
+    mustBe: 0
+  - type: sql
+    name: lexile_counts_subset_chain
+    description: 'Count nesting holds wherever both endpoints of a pair are non-NULL: num_at_or_above_lexile_midpoint
+      <= num_with_lexile <= num_tested. Verified 0 violations in every bronze year; NULLs are exempt because
+      TFS suppression can hit either endpoint independently.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (num_at_or_above_lexile_midpoint IS NOT NULL AND num_with_lexile
+      IS NOT NULL AND num_at_or_above_lexile_midpoint > num_with_lexile) OR (num_with_lexile IS NOT NULL
+      AND num_tested IS NOT NULL AND num_with_lexile > num_tested)
+    mustBe: 0
+  - type: sql
+    name: num_without_lexile_never_exceeds_num_tested
+    description: 'Students without a Lexile measure are a subset of students tested: num_without_lexile
+      <= num_tested wherever both are non-NULL. Verified 0 violations in every bronze year. (The stronger
+      sum identity num_with_lexile + num_without_lexile = num_tested is deliberately NOT enforced — it
+      fails in every year, by thousands on 2023/2024 aggregate rows.)'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_without_lexile IS NOT NULL AND num_tested IS NOT NULL
+      AND num_without_lexile > num_tested
+    mustBe: 0
+customProperties:
+- property: title
+  value: Georgia Milestones End-of-Grade Lexile Reading Scores
+- property: summary
+  value: Lexile reading-measure distributions by grade at school, district, and state level, 2015-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2015-2024
+- property: schema_hash
+  value: 971f8f1c82d6b245c78083940fd83a5c5f13c30c86c1051d6cc24a1426f20420
+- property: available_years
+  value:
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value:
+  - 2020

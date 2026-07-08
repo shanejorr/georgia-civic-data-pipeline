@@ -1,0 +1,457 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.overdose_deaths
+name: overdose_deaths
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Drug-overdose deaths, crude death rates, and age-adjusted death rates (both per 100,000 population)
+    for Georgia, from official death-certificate data (Georgia Department of Public Health OASIS, Office
+    of Vital Records), 1999 onward. Six OVERLAPPING drug-cause categories are served: all drug overdoses,
+    all opioids, natural/semi-synthetic/synthetic opioids, synthetic opioids other than methadone (the
+    fentanyl-class category), heroin, and methadone. A poly-drug death is counted in every matching category,
+    so deaths must NEVER be summed across drug_category values — always filter to a single category. County
+    x year rows cover all demographics combined; statewide rows add race and sex breakdowns. Rates based
+    on fewer than 5 deaths are suppressed at source (NULL); death counts are never suppressed, and a 0
+    is a true zero.'
+  usage: Cite the Georgia Department of Public Health, Office of Health Indicators for Planning (OASIS,
+    oasis.state.ga.us). ALWAYS filter to a single drug_category — the categories overlap and summing across
+    them double-counts poly-drug deaths. Filter to a single demographic axis (race OR sex) on statewide
+    rows. Use age_adjusted_death_rate_per_100k for cross-county or cross-group comparisons; deaths and
+    rates are additive across counties within one category (county deaths sum exactly to the statewide
+    row).
+  limitations: Statewide rows have NULL county_fips. Drug-cause categories overlap (a poly-drug death
+    is counted in every matching category), so deaths summed across drug_category values overstate the
+    true total — filter to one category. Rates based on fewer than 5 deaths are suppressed to NULL at
+    source (rate suppression only — the exact deaths count is always published), which leaves rate coverage
+    sparse for small counties and rare categories (heroin, methadone). Demographic breakdowns (race, sex)
+    exist only on statewide rows; county rows are all-demographics-combined because county-level demographic
+    cells are almost entirely suppressed at source. The source's state-grain age and ethnicity breakdowns
+    are not yet served (the ethnicity axis overlaps the race buckets and the platform has no age-bucket
+    demographics yet). Cause definitions exclude deaths whose underlying cause is an ICD-10 mental/behavioral
+    F-code ('Without F-Codes'), so totals may sit slightly below other published overdose series. Deaths
+    are counted by county of residence. Recent years may be revised as late death certificates are filed.
+tags:
+- criminal_justice
+- georgia department of public health, oasis data table tool
+- overdose_deaths
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/overdose_deaths/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/overdose_deaths/**/*.parquet
+  format: parquet
+schema:
+- name: overdose_deaths
+  logicalType: object
+  physicalType: parquet
+  physicalName: overdose_deaths
+  description: overdose_deaths fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, demographic, drug_category (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: dph_oasis
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+    - drug_category
+  - property: key_metric
+    value: death_rate_per_100k
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/overdose_deaths/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), counties detail
+      query: SELECT * FROM overdose_deaths WHERE year = 2024 LIMIT 100
+    - description: Filter by drug_category = all_drug_overdoses
+      query: SELECT * FROM overdose_deaths WHERE drug_category = 'all_drug_overdoses' AND year = 2024
+        LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year of death (year the death occurred, not the publication year).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the decedent's county of residence; FK
+      to the counties dimension. NULL on statewide rows. Deaths are counted by residence, not by where
+      the death occurred.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic slice. County rows are always ''all'' (the source suppresses nearly all
+      county-level demographic cells, so they are not published); statewide rows carry ''all'' plus two
+      overlapping axes: race (asian, black, multiracial, native_american, pacific_islander, race_unknown,
+      white) and sex (female, male). Filter to one axis — summing race rows and sex rows together double-counts.
+      Race uses the post-1997 OMB split convention (separate asian and pacific_islander buckets, no combined
+      rollup); the seven race buckets are mutually exclusive and sum exactly to the ''all'' row, as do
+      female + male. race_unknown is published by the source and has zero deaths in every year to date.
+      Age and ethnicity breakdowns exist in the source at state grain but are not yet served.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian'
+    - 'black'
+    - 'female'
+    - 'male'
+    - 'multiracial'
+    - 'native_american'
+    - 'pacific_islander'
+    - 'race_unknown'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Demographic slice: ''all'' everywhere; race and sex breakdowns on statewide rows only.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: drug_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'OASIS drug-overdose cause category. THE CATEGORIES OVERLAP AND ARE NOT ADDITIVE: all_drug_overdoses
+      contains all_opioids, which contains the four opioid sub-types (natural_semisynthetic_synthetic_opioids,
+      synthetic_opioids_excl_methadone, heroin, methadone), and the sub-types overlap each other — a death
+      involving both heroin and fentanyl is counted in both. Summing deaths across drug_category values
+      double-counts (2023 statewide: the four sub-types sum to 3,609 deaths vs 1,838 actual all-opioid
+      deaths); always filter to ONE category. synthetic_opioids_excl_methadone (ICD-10 T40.4) is the fentanyl-class
+      category. Definitions are the OASIS ''Without F-Codes'' variants (deaths whose underlying cause
+      is an ICD-10 mental/behavioral F-code are excluded).'
+    examples:
+    - 'all_drug_overdoses'
+    enum:
+    - 'all_drug_overdoses'
+    - 'all_opioids'
+    - 'heroin'
+    - 'methadone'
+    - 'natural_semisynthetic_synthetic_opioids'
+    - 'synthetic_opioids_excl_methadone'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Drug Category
+    - property: short_description
+      value: OASIS drug-cause category — categories OVERLAP (a poly-drug death counts in every matching
+        one); never sum across categories.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: deaths
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Count of resident deaths in the drug category. Never suppressed at source: 0 is a true
+      zero (bronze renders zeros as empty cells, filled to 0 here — verified by exact reconciliation:
+      county, race, and sex slices each sum to the statewide total). Numerator of the death rates. NOT
+      additive across drug_category values (see drug_category).'
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Deaths
+    - property: short_description
+      value: Resident drug-overdose deaths in the category (never suppressed; 0 is a true zero).
+    - property: unit
+      value: count
+    - property: metric_component
+      value: numerator
+  - name: death_rate_per_100k
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Crude death rate per 100,000 residents (source-computed). NOT on the platform's 0-1 rate
+      scale — the natural unit is deaths per 100,000 population. Suppressed at source (NULL, bronze sentinel
+      -5) when based on fewer than 5 deaths; the row's exact deaths count is still published, so heavy
+      NULL density in small counties and rare categories is expected. 0.0 on zero-death rows (normalized
+      from the source's inconsistent zero rendering).
+    examples:
+    - 21.6
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Death Rate per 100k
+    - property: short_description
+      value: Crude drug-overdose death rate per 100,000 residents (suppressed to NULL when based on fewer
+        than 5 deaths).
+    - property: null_meaning
+      value: 'NULL = suppressed at source: rate based on fewer than 5 deaths (the row''s exact deaths
+        count, 1-4, is still published).'
+    - property: key_metric
+      value: true
+  - name: age_adjusted_death_rate_per_100k
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Age-adjusted death rate per 100,000 residents (source-computed, standardized to the 2000
+      US standard population) — use this one when comparing counties or demographic groups with different
+      age structures. NOT on the platform's 0-1 rate scale. Same suppression as the crude rate (NULL when
+      based on fewer than 5 deaths); 0.0 on zero-death rows.
+    examples:
+    - 23.2
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Age Adjusted Death Rate per 100k
+    - property: short_description
+      value: Age-adjusted drug-overdose death rate per 100,000 (2000 US standard population).
+    - property: null_meaning
+      value: 'NULL = suppressed at source: rate based on fewer than 5 deaths.'
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 10 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian', 'black', 'female', 'male', 'multiracial', 'native_american', 'pacific_islander', 'race_unknown',
+      'white')
+    mustBe: 0
+  - type: sql
+    name: drug_category_in_allowed_values
+    description: drug_category is one of the 6 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE drug_category IS NOT NULL AND drug_category NOT IN ('all_drug_overdoses',
+      'all_opioids', 'heroin', 'methadone', 'natural_semisynthetic_synthetic_opioids', 'synthetic_opioids_excl_methadone')
+    mustBe: 0
+  - type: sql
+    name: deaths_non_negative
+    description: deaths is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE deaths IS NOT NULL AND deaths < 0
+    mustBe: 0
+  - type: sql
+    name: death_rate_per_100k_non_negative
+    description: Negative rate values are OASIS suppression sentinels and must have been nulled — a surviving
+      negative means the sentinel mask broke. (Authored because per-100k rates carry no unit marker.)
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE death_rate_per_100k IS NOT NULL AND death_rate_per_100k
+      < 0
+    mustBe: 0
+  - type: sql
+    name: age_adjusted_death_rate_per_100k_non_negative
+    description: Negative rate values are OASIS suppression sentinels and must have been nulled.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE age_adjusted_death_rate_per_100k IS NOT NULL AND age_adjusted_death_rate_per_100k
+      < 0
+    mustBe: 0
+  - type: sql
+    name: rates_null_only_when_deaths_1_to_4
+    description: Rate suppression at source applies exactly to rates based on fewer than 5 deaths, and
+      zero-death rows are normalized to 0.0 — so a NULL rate must sit on a row with 1-4 deaths.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (death_rate_per_100k IS NULL OR age_adjusted_death_rate_per_100k
+      IS NULL) AND deaths NOT BETWEEN 1 AND 4
+    mustBe: 0
+  - type: sql
+    name: zero_deaths_implies_zero_rates
+    description: A zero-death row has a true rate of 0 (normalized from the source's inconsistent zero
+      rendering) — both rates must be exactly 0.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE deaths = 0 AND (death_rate_per_100k IS NULL OR death_rate_per_100k
+      <> 0 OR age_adjusted_death_rate_per_100k IS NULL OR age_adjusted_death_rate_per_100k <> 0)
+    mustBe: 0
+  - type: sql
+    name: demographic_breakdowns_state_only
+    description: The source publishes demographic breakdowns only at state grain — every county row must
+      be demographic = 'all'.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE county_fips IS NOT NULL AND demographic <> 'all'
+    mustBe: 0
+  - type: sql
+    name: county_deaths_sum_to_state_total
+    description: Deaths are never suppressed and every county is published, so the 159 county rows must
+      sum EXACTLY to the statewide 'all' row for every (year, drug_category).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, drug_category, MAX(CASE WHEN county_fips IS NULL AND demographic
+      = 'all' THEN deaths END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN deaths END)
+      AS county_sum FROM {object} GROUP BY year, drug_category) WHERE state_total IS NULL OR county_sum
+      IS NULL OR state_total <> county_sum
+    mustBe: 0
+  - type: sql
+    name: race_deaths_partition_to_state_total
+    description: The seven race buckets (split asian / pacific_islander convention, including the always-zero
+      race_unknown) are mutually exclusive and exhaustive — they must sum EXACTLY to the statewide 'all'
+      row for every (year, drug_category).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, drug_category, MAX(CASE WHEN demographic = 'all' THEN deaths
+      END) AS all_deaths, SUM(CASE WHEN demographic IN ('asian', 'black', 'multiracial', 'native_american',
+      'pacific_islander', 'race_unknown', 'white') THEN deaths END) AS race_sum FROM {object} WHERE county_fips
+      IS NULL GROUP BY year, drug_category) WHERE all_deaths IS NULL OR race_sum IS NULL OR all_deaths
+      <> race_sum
+    mustBe: 0
+  - type: sql
+    name: sex_deaths_partition_to_state_total
+    description: Female + male deaths must sum EXACTLY to the statewide 'all' row for every (year, drug_category).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, drug_category, MAX(CASE WHEN demographic = 'all' THEN deaths
+      END) AS all_deaths, SUM(CASE WHEN demographic IN ('female', 'male') THEN deaths END) AS sex_sum
+      FROM {object} WHERE county_fips IS NULL GROUP BY year, drug_category) WHERE all_deaths IS NULL OR
+      sex_sum IS NULL OR all_deaths <> sex_sum
+    mustBe: 0
+  - type: sql
+    name: opioid_category_hierarchy
+    description: 'Category containment: all_opioids deaths cannot exceed all_drug_overdoses, and no opioid
+      sub-type can exceed all_opioids, within any (year, geography, demographic) cell. (Sub-types may
+      legitimately SUM above all_opioids — poly-drug overlap.)'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, demographic, MAX(CASE WHEN drug_category =
+      'all_drug_overdoses' THEN deaths END) AS all_drugs, MAX(CASE WHEN drug_category = 'all_opioids'
+      THEN deaths END) AS opioids, MAX(CASE WHEN drug_category = 'heroin' THEN deaths END) AS heroin,
+      MAX(CASE WHEN drug_category = 'methadone' THEN deaths END) AS methadone, MAX(CASE WHEN drug_category
+      = 'natural_semisynthetic_synthetic_opioids' THEN deaths END) AS nss_opioids, MAX(CASE WHEN drug_category
+      = 'synthetic_opioids_excl_methadone' THEN deaths END) AS synthetic FROM {object} GROUP BY year,
+      county_fips, demographic) WHERE opioids > all_drugs OR heroin > opioids OR methadone > opioids OR
+      nss_opioids > opioids OR synthetic > opioids
+    mustBe: 0
+  - type: sql
+    name: all_159_counties_every_year_and_category
+    description: OASIS publishes a full county grid (deaths are never suppressed) — every (year, drug_category)
+      must have exactly 159 county rows.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, drug_category, COUNT(*) AS n FROM {object} WHERE county_fips
+      IS NOT NULL GROUP BY year, drug_category) WHERE n <> 159
+    mustBe: 0
+  - type: sql
+    name: state_demographic_grid_complete
+    description: 'Every (year, drug_category) must have exactly 10 statewide rows: ''all'' + 7 race buckets
+      + female + male.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, drug_category, COUNT(*) AS n FROM {object} WHERE county_fips
+      IS NULL GROUP BY year, drug_category) WHERE n <> 10
+    mustBe: 0
+customProperties:
+- property: title
+  value: Drug Overdose Deaths by County
+- property: summary
+  value: Drug-overdose deaths and death rates per 100,000 for Georgia counties by year and drug category
+    (opioids, fentanyl-class, heroin, methadone), from death certificates, 1999 onward.
+- property: source
+  value: Georgia Department of Public Health, OASIS Data Table Tool (death-certificate data, Office of
+    Vital Records)
+- property: source_url
+  value: https://oasis.state.ga.us/dtt/mortalitydrugoverdoses
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 1999-2024
+- property: schema_hash
+  value: 3f7052554c1a444e5950eb97b79d73cf6d0128b2c5daee29e47647327233d0f1
+- property: available_years
+  value:
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

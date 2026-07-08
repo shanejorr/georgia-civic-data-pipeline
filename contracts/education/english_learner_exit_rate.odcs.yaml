@@ -1,0 +1,341 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.english_learner_exit_rate
+name: english_learner_exit_rate
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Governor's Office of Student Achievement (GOSA) annual English Learner (EL) program exit activity.
+    For every Georgia LEA — standard county/city districts, state and commission charter schools, State
+    Schools, and state-agency systems — plus a single statewide aggregate row, reports the number of EL
+    students who exited EL services, the total EL enrollment used as the denominator, and the resulting
+    exit rate per fiscal year. Coverage is fiscal years 2019-2024 (FY2024 = the 2023-24 school year) at
+    the district and state detail levels; no school-level detail is published. District cells below the
+    privacy threshold are suppressed in bronze as TFS and are NULL in gold; state totals are never suppressed.
+    This topic is the merged successor to three legacy GOSA source topics (english_learners_el_exit_rate_district_level,
+    _state_level, and _3yr_for_report_card) that published the same metric set; the report-card edition
+    duplicated the district/state values exactly and was dropped during the merge.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'District and state detail only: school_code is always NULL — no school-level data is published
+    for this metric. Suppressed cells are NULL (not zero): district rows below the privacy threshold are
+    suppressed in bronze as TFS; published counts are always >= 10. A row may carry num_el_students while
+    num_el_exits and el_exit_rate are NULL (the exit cohort is below the threshold even though total EL
+    enrollment is not). State totals are never suppressed. el_exit_rate is NULL whenever either count
+    is suppressed — including 130 FY2024 district rows where GOSA published unverifiable numeric rates
+    alongside suppressed counts (treated as suppressed). The State Schools representation changes across
+    years: individual 7-digit rows (7991893-7991895) in FY2019 only, no State Schools rows at all in FY2020,
+    one combined 799 row from FY2021 — a long-run State Schools series requires handling both representations
+    and the FY2020 gap.'
+tags:
+- education
+- gosa
+- english_learner_exit_rate
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/english_learner_exit_rate/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/english_learner_exit_rate/**/*.parquet
+  format: parquet
+schema:
+- name: english_learner_exit_rate
+  logicalType: object
+  physicalType: parquet
+  physicalName: english_learner_exit_rate
+  description: english_learner_exit_rate fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code (geography columns are NULL
+    at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - districts
+    - states
+  - property: default_detail
+    value: districts
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+  - property: key_metric
+    value: el_exit_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/english_learner_exit_rate/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), districts detail
+      query: SELECT * FROM english_learner_exit_rate WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM english_learner_exit_rate WHERE district_code = '601' AND year = 2024 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Georgia fiscal year, equal to the ending (spring) calendar year of the school year (FY2024
+      = 2023-24). Read from the bronze FISCAL_YEAR column and cross-checked against the filename year.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA district/system code (FK to districts dimension), zero-padded to 3 digits; 7-digit
+      charter and state-school codes are preserved unchanged. NULL on the statewide aggregate rows. Beyond
+      the standard county/city districts the series includes 782xxxx/783xxxx charter LEAs, the combined
+      State Schools row (799, FY2021+; individual State Schools rows 7991893-7991895 in FY2019 only —
+      none in FY2020), and the Dept. of Corrections (890).
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code (composite FK to schools dimension with district_code). Always NULL
+      in this topic (enforced by a quality check) — no school-level detail is published for this metric.
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    - property: null_meaning
+      value: Always NULL — EL exit activity is published at the district and state levels only; the column
+        exists so every education fact table shares the same key shape.
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: num_el_exits
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of English Learner students who exited the EL program during the fiscal year.
+      NULL when the bronze source suppressed the cell as TFS (too few students); published values are
+      always 10 or more. State rows are never suppressed.
+    examples:
+    - 46
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number EL Exits
+    - property: unit
+      value: count
+    - property: metric_component
+      value: numerator
+  - name: num_el_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Total English Learner enrollment for the fiscal year — the denominator of el_exit_rate.
+      NULL when suppressed as TFS; suppressed only when num_el_exits is also suppressed (enforced by a
+      quality check). State rows are never suppressed.
+    examples:
+    - 715
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number EL Students
+    - property: unit
+      value: count
+    - property: metric_component
+      value: denominator
+  - name: el_exit_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'EL program exit rate on the 0-1 scale (0.064 = 6.4%; bronze publishes 0-100 and is divided
+      by 100 per data-cleaning-standards §4). NULL whenever either num_el_exits or num_el_students is
+      suppressed: in FY2019-2023 the bronze co-suppresses all three cells, and in FY2024 GOSA published
+      numeric rates even for the 130 district rows with suppressed counts — those rates are unverifiable
+      and are NULLed by the transform (recorded in the manifest). Where published, the rate reconciles
+      with num_el_exits / num_el_students within 0.0006 (enforced by a quality check).'
+    examples:
+    - 0.064
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: EL Exit Rate
+    - property: short_description
+      value: Share of English Learner students who exited EL services during the year, on a 0-1 scale.
+    - property: unit
+      value: proportion
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: num_el_exits_non_negative
+    description: num_el_exits is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_el_exits IS NOT NULL AND num_el_exits < 0
+    mustBe: 0
+  - type: sql
+    name: num_el_students_non_negative
+    description: num_el_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_el_students IS NOT NULL AND num_el_students < 0
+    mustBe: 0
+  - type: sql
+    name: el_exit_rate_within_unit_interval
+    description: el_exit_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE el_exit_rate IS NOT NULL AND (el_exit_rate < 0 OR el_exit_rate
+      > 1)
+    mustBe: 0
+  - type: sql
+    name: school_code_always_null
+    description: 'Structural fact: EL exit activity is published at the district and state levels only
+      — school_code (kept for the shared education key shape) must be NULL on every row.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE school_code IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: one_state_row_per_year
+    description: Every fiscal year carries exactly one statewide aggregate row (district_code IS NULL).
+      Zero means the state file was lost; more than one means a duplicated or mis-routed aggregate.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} GROUP BY year HAVING SUM(CASE WHEN district_code
+      IS NULL THEN 1 ELSE 0 END) <> 1) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_metrics_never_null
+    description: State totals are never suppressed (statewide EL enrollment >100k; verified across all
+      six state files). A NULL on a state row means a parsing regression or a new suppression regime —
+      either must be analyzed.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL AND (num_el_exits IS NULL OR num_el_students
+      IS NULL OR el_exit_rate IS NULL)
+    mustBe: 0
+  - type: sql
+    name: exit_count_within_student_count
+    description: 'Students who exit the EL program are a subset of EL enrollment, so the exit count can
+      never exceed the student count where both are published (verified: zero violations in all six district
+      files).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_el_exits IS NOT NULL AND num_el_students IS NOT NULL
+      AND num_el_exits > num_el_students
+    mustBe: 0
+  - type: sql
+    name: student_count_null_implies_exit_count_null
+    description: 'Suppression hierarchy: if total EL enrollment is below the privacy threshold, the (smaller)
+      exit cohort must be too — no row carries an exit count without an enrollment count (verified in
+      all six district files).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_el_students IS NULL AND num_el_exits IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: el_exit_rate_requires_counts
+    description: 'Co-null rule pinning the FY2024 quirk mask: a published rate with either underlying
+      count suppressed is unverifiable and must be NULL — el_exit_rate is non-NULL only where both counts
+      are non-NULL.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE el_exit_rate IS NOT NULL AND (num_el_exits IS NULL OR num_el_students
+      IS NULL)
+    mustBe: 0
+  - type: sql
+    name: el_exit_rate_present_when_counts_present
+    description: 'Converse co-null rule: every bronze row that publishes both counts also publishes the
+      rate (verified: zero exceptions in all 12 files), so a NULL rate alongside two non-NULL counts means
+      a cast or mask regression.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE el_exit_rate IS NULL AND num_el_exits IS NOT NULL AND num_el_students
+      IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: el_exit_rate_reconciles_with_counts
+    description: 'Component reconciliation: where all three values are published, the rate must equal
+      num_el_exits / num_el_students within 0.0006 on the 0-1 scale. The district bronze rounds the rate
+      to one decimal on the 0-100 scale (max rounding error 0.05 -> 0.0005 after /100; state files round
+      to two decimals -> 0.00005); 0.0006 adds float-epsilon headroom. Verified max observed deviation:
+      0.0005.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE el_exit_rate IS NOT NULL AND num_el_exits IS NOT NULL AND
+      num_el_students IS NOT NULL AND num_el_students > 0 AND ABS(el_exit_rate - (CAST(num_el_exits AS
+      DOUBLE) / num_el_students)) > 0.0006
+    mustBe: 0
+customProperties:
+- property: title
+  value: English Learner Program Exit Rate
+- property: summary
+  value: Rate at which Georgia English Learner students exit EL services by district and statewide, fiscal
+    years 2019-2024.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2019-2024
+- property: schema_hash
+  value: 09953e17f7ba66a2dc6e9ad65f7f151fbc12a1dadc687360baf4367d394d135c
+- property: available_years
+  value:
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

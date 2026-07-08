@@ -1,0 +1,349 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.enrollment_program_participation
+name: enrollment_program_participation
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Office of Student Achievement (GOSA) enrollment program participation. For every Georgia
+    public school, school district, and the state as a whole, the count and share of students enrolled
+    in each of nine state instructional programs: Remedial grades 6-8, Early Intervention Program (EIP)
+    K-5, Remedial grades 9-12, Special Education K-12, ESOL, Special Education Pre-K, Vocational grades
+    9-12, Alternative Programs, and Gifted. This topic is COMPUTED from the shared GOSA ''Enrollment by
+    Subgroup Programs'' bronze (FTE enrollment disaggregated by subgroup); the companion enrollment_demographic_shares
+    topic exposes the demographic-share side of the same files. participation_rate is the share GOSA publishes
+    for each program: students in the program over the entity''s total FTE enrollment in the grades the
+    program serves (the denominator GOSA standardized on at the May 2013 CCRPI launch). Coverage spans
+    school years 2010-11 through 2023-24 — the 2004-2010 bronze files predate the program-column schema
+    expansion and publish no program data, so those years are excluded (the companion topic covers their
+    demographic-share columns).'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- governor's office of student achievement
+- enrollment_program_participation
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/enrollment_program_participation/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/enrollment_program_participation/**/*.parquet
+  format: parquet
+schema:
+- name: enrollment_program_participation
+  logicalType: object
+  physicalType: parquet
+  physicalName: enrollment_program_participation
+  description: enrollment_program_participation fact table, year-partitioned Parquet (split by detail
+    level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, program (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - program
+  - property: key_metric
+    value: participation_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/enrollment_program_participation/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM enrollment_program_participation WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM enrollment_program_participation WHERE district_code = '601' AND year = 2024
+        LIMIT 100
+    - description: Filter by program = gifted
+      query: SELECT * FROM enrollment_program_participation WHERE program = 'gifted' AND year = 2024 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: 'Ending calendar year of the school year (2024 = the 2023-24 school year). Sourced from
+      LONG_SCHOOL_YEAR (cross-checked against the bronze filename). Coverage starts at 2011: the 2004-2010
+      bronze publishes no program columns and is excluded from this topic.'
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded for standard districts,
+      7-digit for charter districts. NULL on state-level aggregate rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit zero-padded GOSA school code (composite FK to schools dimension with district_code).
+      NULL on district- and state-level aggregate rows.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: program
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Canonical instructional-program code. Exactly nine values: remedial_gr_6_8, eip_k_5,
+      remedial_gr_9_12, special_ed_k_12, esol, special_ed_pk, vocation_9_12, alt_programs, gifted. Derived
+      from the bronze ENROLL_COUNT_<PROGRAM> column name (lowercased, with SPECIAL_ED_K12 regularized
+      to special_ed_k_12). Every entity-year carries all nine program rows; programs the entity does not
+      offer carry NULL metrics.'
+    examples:
+    - 'gifted'
+    enum:
+    - 'alt_programs'
+    - 'eip_k_5'
+    - 'esol'
+    - 'gifted'
+    - 'remedial_gr_6_8'
+    - 'remedial_gr_9_12'
+    - 'special_ed_k_12'
+    - 'special_ed_pk'
+    - 'vocation_9_12'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Program
+    - property: short_description
+      value: Which instructional program the row is for; one of nine codes (gifted, special ed, ESOL,
+        EIP, remedial, etc.).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students enrolled in the program at the entity. NULL when the program does
+      not apply to the entity (e.g., grade 6-8 remediation at a high school) or when the bronze cell was
+      TFS-suppressed (count columns from 2021). For alt_programs in 2011 and 2019 the count is additionally
+      NULLed wherever the companion rate is < 0.95 or NULL — a GOSA publishing error in exactly those
+      two years set the count to the entity's TOTAL enrollment (state row 1.53M/1.60M vs 10k-33k in every
+      other year), not the alt-program subset; genuine all-alternative entities (rate >= 0.95, where count
+      = enrollment is correct) keep their count, and the rate is always preserved.
+    examples:
+    - 42
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Students
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'Several causes share the same NULL: (a) the program does not apply to the entity — preserved
+        as NULL, never coerced to 0; (b) TFS small-cell suppression in the program count columns (2021
+        onward); (c) for alt_programs in 2011/2019, the publisher-error mask (bronze count equalled total
+        enrollment). NULL is NOT a real zero.'
+    - property: metric_component
+      value: numerator
+  - name: participation_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Share of the entity''s FTE enrollment (in the grades the program serves) enrolled in
+      the program, on the 0-1 decimal scale (bronze 0-100 divided by 100) and bounded on [0, 1] — the
+      published maximum is exactly 1.0. NULL when the program does not apply or the bronze cell was TFS-suppressed
+      (percentage columns from 2023). special_ed_pk rates are NULL for 2011-2012: pre-2013 GOSA published
+      the rate on a different, undocumented denominator (maxima of 644-759%, impossible as a share) that
+      cannot be re-normalized; the values are masked per the known-source-defect policy rather than published,
+      so the column stays genuinely bounded. The companion num_students for special_ed_pk is preserved
+      in those years. Any 2013+ special_ed_pk rate > 1.0 would be defensively NULLed too (none exist today).'
+    examples:
+    - 0.12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Participation Rate
+    - property: short_description
+      value: Share of the entity's enrollment in this program, on a 0-1 scale; denominator is the grades
+        the program serves.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: 'Multiple causes share the same NULL: the program does not apply to the entity; TFS small-cell
+        suppression (percentage columns 2023 onward); or the pre-2013 special_ed_pk denominator-drift
+        mask (2011-2012). NULL is NOT a real zero participation rate.'
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: program_in_allowed_values
+    description: program is one of the 9 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE program IS NOT NULL AND program NOT IN ('alt_programs',
+      'eip_k_5', 'esol', 'gifted', 'remedial_gr_6_8', 'remedial_gr_9_12', 'special_ed_k_12', 'special_ed_pk',
+      'vocation_9_12')
+    mustBe: 0
+  - type: sql
+    name: num_students_non_negative
+    description: num_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 0
+    mustBe: 0
+  - type: sql
+    name: participation_rate_within_unit_interval
+    description: participation_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE participation_rate IS NOT NULL AND (participation_rate
+      < 0 OR participation_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: nine_program_rows_per_entity_year
+    description: 'Structural fact: the unpivot emits one row per program for all nine state instructional
+      programs at every entity-year (non-applicable programs carry NULL metrics rather than being dropped),
+      so every (year, district_code, school_code) group must contain exactly nine rows. GROUP BY treats
+      NULL geography keys as equal, which matches entity identity across detail levels.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code FROM {object} GROUP BY year,
+      district_code, school_code HAVING COUNT(*) <> 9) AS bad_entities
+    mustBe: 0
+  - type: sql
+    name: special_ed_pk_rate_null_pre_2013
+    description: 'Structural fact of the documented mask: pre-2013 GOSA published special_ed_pk rates
+      on a different, undocumented denominator, so every special_ed_pk row before 2013 must carry a NULL
+      participation_rate (num_students remains populated).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE program = 'special_ed_pk' AND year < 2013 AND participation_rate
+      IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: alt_programs_count_kept_only_for_all_alt_entities_2011_2019
+    description: 'Structural fact of the documented mask: in the 2011/2019 publishing-error years an alt_programs
+      num_students may survive only on genuine all-alternative entities, i.e. rows whose participation_rate
+      is >= 0.95. Any surviving count with a lower or NULL rate means the publisher-error mask regressed.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE program = 'alt_programs' AND year IN (2011, 2019) AND num_students
+      IS NOT NULL AND (participation_rate IS NULL OR participation_rate < 0.95)
+    mustBe: 0
+  - type: sql
+    name: count_rate_co_null_outside_known_asymmetries
+    description: 'Co-null rule: bronze publishes count and rate as an all-or-nothing pair (program-not-applicable
+      NULLs both; 2023+ TFS suppresses both), so outside the three known asymmetries — 2021-2022 TFS hitting
+      only count columns, the pre-2013 special_ed_pk rate mask, and the 2011/2019 alt_programs count mask
+      — num_students and participation_rate must be NULL or non-NULL together. Verified to hold on every
+      other (year, program) slice.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year NOT IN (2021, 2022) AND NOT (program = 'special_ed_pk'
+      AND year < 2013) AND NOT (program = 'alt_programs' AND year IN (2011, 2019)) AND ((num_students
+      IS NULL) <> (participation_rate IS NULL))
+    mustBe: 0
+customProperties:
+- property: title
+  value: Enrollment Program Participation
+- property: summary
+  value: Share of students enrolled in nine state instructional programs (gifted, special ed, ESOL, etc.)
+    by Georgia school, district, and statewide, 2011-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2011-2024
+- property: schema_hash
+  value: 0c3a1c756de1011f75889dced2a657ce3a06e5f308d031414aa3674f1d31b4da
+- property: available_years
+  value:
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

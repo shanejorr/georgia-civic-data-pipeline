@@ -1,0 +1,14 @@
+# Data files — large binary/raw files not useful for AI context
+data/bronze/
+data/gold/
+*.parquet
+
+# Python artifacts
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Locks and caches
+uv.lock

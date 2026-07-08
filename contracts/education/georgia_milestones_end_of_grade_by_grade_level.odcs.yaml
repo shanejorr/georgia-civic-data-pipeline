@@ -1,0 +1,711 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.georgia_milestones_end_of_grade_by_grade_level
+name: georgia_milestones_end_of_grade_by_grade_level
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Georgia Milestones End-of-Grade (EOG) assessment results for Georgia public-school students
+    in grades 3-8, disaggregated by individual grade level. Each row is one (entity x grade x demographic
+    subgroup x subject) cell reporting the number of students tested plus the count and percentage of
+    test-takers at each of four achievement levels (Beginning, Developing, Proficient, Distinguished),
+    with derived cumulative developing-or-above and proficient-or-above shares. State, district, and school
+    detail levels. School years 2014-15 through 2023-24; 2019-20 is absent (EOG administration cancelled,
+    COVID-19).
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: 'Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code;
+    district rows have NULL school_code. 2020 has no rows (EOG cancelled during COVID-19). Grade x subject
+    coverage is naturally sparse and changes over time (science/social_studies grades 5+8 only from 2017,
+    social_studies grade 8 only from 2021, physical_science grade 8 only). Foster Care caveat (2022-2024):
+    the foster_care rows are the only rows whose four per-level shares can fail to sum to 1 — 28 fully-unsuppressed
+    state-level rows carry level counts summing below num_tested (students tested but not assigned a performance
+    level at publication), and partially- or fully-suppressed foster_care cells publish shares covering
+    only the unsuppressed levels, including an all-four-zeros placeholder pattern. The published GOSA
+    values are preserved exactly rather than reconciled.'
+tags:
+- education
+- governor's office of student achievement
+- georgia_milestones_end_of_grade_by_grade_level
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/georgia_milestones_end_of_grade_by_grade_level/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/georgia_milestones_end_of_grade_by_grade_level/**/*.parquet
+  format: parquet
+schema:
+- name: georgia_milestones_end_of_grade_by_grade_level
+  logicalType: object
+  physicalType: parquet
+  physicalName: georgia_milestones_end_of_grade_by_grade_level
+  description: georgia_milestones_end_of_grade_by_grade_level fact table, year-partitioned Parquet (split
+    by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic, grade_level,
+    subject (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+    - grade_level
+    - subject
+  - property: key_metric
+    value: pct_proficient_learner_or_above
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/georgia_milestones_end_of_grade_by_grade_level/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM georgia_milestones_end_of_grade_by_grade_level WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM georgia_milestones_end_of_grade_by_grade_level WHERE district_code = '601'
+        AND year = 2024 LIMIT 100
+    - description: Filter by grade_level = 05
+      query: SELECT * FROM georgia_milestones_end_of_grade_by_grade_level WHERE grade_level = '05' AND
+        year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (e.g., 2024 = 2023-24), from the filename and
+      cross-checked against the file's LONG_SCHOOL_YEAR. 2020 has no rows (EOG cancelled during COVID-19
+      closures).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded standard codes or
+      7-digit state-charter / commission-charter / state-school codes. NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). NULL on district- and state-level rows.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Canonical demographic subgroup (FK to the global demographics dimension), normalized
+      from bronze SUBGROUP_NAME. This topic uses the split race convention: asian and pacific_islander
+      are separate, mutually exclusive rows (the source publishes both labels in every year). 18 core
+      subgroups in 2015-2019; active_duty and homeless added in 2021; foster_care and military_connected
+      (renaming active_duty) added in 2022. NON-ADDITIVE MILITARY KEYS: active_duty (2021) and military_connected
+      (2022+) never co-occur in a year, but conceptually active-duty dependents are a subset of military-connected
+      students — do not sum the two keys across years as if disjoint.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'active_duty'
+    - 'all'
+    - 'asian'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'female'
+    - 'foster_care'
+    - 'hispanic'
+    - 'homeless'
+    - 'male'
+    - 'migrant'
+    - 'military_connected'
+    - 'multiracial'
+    - 'native_american'
+    - 'not_economically_disadvantaged'
+    - 'not_english_learners'
+    - 'not_migrant'
+    - 'pacific_islander'
+    - 'students_with_disabilities'
+    - 'students_without_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Student subgroup the row covers (race, gender, economic, disability, English-learner, etc.);
+        'all' is all students.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: grade_level
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Grade of the test-takers in this row, as a canonical 2-char zero-padded string. Bronze
+      ACDMC_LVL is unpadded (3-8) in 2015 and 2019 and zero-padded (03-08) in all other years; gold normalizes
+      both to 03-08. This column is the grain difference vs the all-grades rollup sibling topic.
+    examples:
+    - '05'
+    enum:
+    - '03'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Level
+    - property: short_description
+      value: Grade tested, 03-08; this is the grade-by-grade breakout that distinguishes this topic from
+        the all-grades rollup.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: subject
+    logicalType: string
+    physicalType: string
+    required: true
+    description: EOG academic subject. english_language_arts and mathematics span grades 3-8 in every
+      year; science and social_studies are restricted to grades 5 and 8 from 2017 (social_studies to grade
+      8 only from 2021); physical_science (2022+) is an 8th-grade accelerated option. The natural grade
+      x subject sparsity is preserved — untested combinations have no rows; rare out-of-pattern audit/retest
+      cells are retained.
+    examples:
+    - 'mathematics'
+    enum:
+    - 'english_language_arts'
+    - 'mathematics'
+    - 'physical_science'
+    - 'science'
+    - 'social_studies'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Subject
+    - property: short_description
+      value: EOG content area tested (ELA, mathematics, science, social studies, physical science); coverage
+        varies by grade and year.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: num_tested
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students tested in this (entity x grade x subgroup x subject) cell. NULL when
+      GOSA suppressed the cell (TFS); in 2024 GOSA extended suppression to this column (~30% of rows)
+      while still publishing the rounded percentage distribution.
+    examples:
+    - 144
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS, too few students). Rare before 2024; ~30%% of 2024 rows.
+    - property: metric_component
+      value: denominator
+  - name: num_beginning_learner
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of students at the lowest achievement level (Beginning Learner). Bronze BEGIN_CNT;
+      NULL when suppressed.
+    examples:
+    - 11
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Beginning Learner
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS or empty source field).
+  - name: num_developing_learner
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of students at the second achievement level (Developing Learner). Bronze DEVELOPING_CNT;
+      NULL when suppressed.
+    examples:
+    - 35
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Developing Learner
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS or empty source field).
+  - name: num_proficient_learner
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of students at the third achievement level (Proficient Learner). Bronze PROFICIENT_CNT;
+      NULL when suppressed.
+    examples:
+    - 70
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Proficient Learner
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS or empty source field).
+  - name: num_distinguished_learner
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of students at the highest achievement level (Distinguished Learner). Bronze DISTINGUISHED_CNT;
+      the most-suppressed metric (~70-76% of rows in recent years — few cells have enough distinguished
+      scorers to clear the threshold).
+    examples:
+    - 28
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Distinguished Learner
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS or empty source field).
+  - name: pct_beginning_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Share of tested students at the Beginning level, 0-1 scale (bronze 0-100 divided by
+      100). Published shares are exact to one decimal on the 0-100 scale against num_tested. CAVEAT: on
+      foster_care rows from 2022 onward the four level shares can sum below 1 (students tested but not
+      assigned a level, plus all-zero placeholder rows on fully-suppressed cells) — published GOSA values
+      are preserved exactly.'
+    examples:
+    - 0.157
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Beginning Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (whole-cell suppression; never NULL in 2024).
+  - name: pct_developing_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of tested students at the Developing level, 0-1 scale. See pct_beginning_learner
+      for the foster_care caveat.
+    examples:
+    - 0.549
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Developing Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (whole-cell suppression; never NULL in 2024).
+  - name: pct_proficient_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of tested students at the Proficient level, 0-1 scale. See pct_beginning_learner
+      for the foster_care caveat.
+    examples:
+    - 0.255
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Proficient Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (whole-cell suppression; never NULL in 2024).
+  - name: pct_distinguished_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of tested students at the Distinguished level, 0-1 scale. See pct_beginning_learner
+      for the foster_care caveat.
+    examples:
+    - 0.039
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Distinguished Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (whole-cell suppression; never NULL in 2024).
+  - name: pct_developing_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Derived cumulative share at Developing or above (developing + proficient + distinguished),
+      0-1 scale. Computed at transform time from the published per-level shares; sums of publisher-rounded
+      shares that land within 0.005 above 1.0 are snapped to 1.0 (a share cannot exceed 1).
+    examples:
+    - 0.843
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Developing Learner or Above
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: NULL whenever any of its three summands is NULL.
+  - name: pct_proficient_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Derived cumulative share at Proficient or above (proficient + distinguished), 0-1 scale.
+      Computed at transform time from the published per-level shares; rounding overshoot above 1.0 within
+      0.005 is snapped to 1.0.
+    examples:
+    - 0.294
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Proficient Learner or Above
+    - property: short_description
+      value: Share of tested students scoring Proficient or Distinguished (proficient-or-above), on a
+        0-1 scale; the headline achievement measure.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: NULL whenever either summand is NULL.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 22 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('active_duty',
+      'all', 'asian', 'black', 'economically_disadvantaged', 'english_learners', 'female', 'foster_care',
+      'hispanic', 'homeless', 'male', 'migrant', 'military_connected', 'multiracial', 'native_american',
+      'not_economically_disadvantaged', 'not_english_learners', 'not_migrant', 'pacific_islander', 'students_with_disabilities',
+      'students_without_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: grade_level_in_allowed_values
+    description: grade_level is one of the 6 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_level IS NOT NULL AND grade_level NOT IN ('03', '04',
+      '05', '06', '07', '08')
+    mustBe: 0
+  - type: sql
+    name: subject_in_allowed_values
+    description: subject is one of the 5 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE subject IS NOT NULL AND subject NOT IN ('english_language_arts',
+      'mathematics', 'physical_science', 'science', 'social_studies')
+    mustBe: 0
+  - type: sql
+    name: num_tested_non_negative
+    description: num_tested is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested < 0
+    mustBe: 0
+  - type: sql
+    name: num_beginning_learner_non_negative
+    description: num_beginning_learner is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_beginning_learner IS NOT NULL AND num_beginning_learner
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_developing_learner_non_negative
+    description: num_developing_learner is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_developing_learner IS NOT NULL AND num_developing_learner
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_proficient_learner_non_negative
+    description: num_proficient_learner is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_proficient_learner IS NOT NULL AND num_proficient_learner
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_distinguished_learner_non_negative
+    description: num_distinguished_learner is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_distinguished_learner IS NOT NULL AND num_distinguished_learner
+      < 0
+    mustBe: 0
+  - type: sql
+    name: pct_beginning_learner_within_unit_interval
+    description: pct_beginning_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_beginning_learner IS NOT NULL AND (pct_beginning_learner
+      < 0 OR pct_beginning_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_developing_learner_within_unit_interval
+    description: pct_developing_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner IS NOT NULL AND (pct_developing_learner
+      < 0 OR pct_developing_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_learner_within_unit_interval
+    description: pct_proficient_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner IS NOT NULL AND (pct_proficient_learner
+      < 0 OR pct_proficient_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_distinguished_learner_within_unit_interval
+    description: pct_distinguished_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_distinguished_learner IS NOT NULL AND (pct_distinguished_learner
+      < 0 OR pct_distinguished_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_developing_learner_or_above_within_unit_interval
+    description: pct_developing_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner_or_above IS NOT NULL AND (pct_developing_learner_or_above
+      < 0 OR pct_developing_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_learner_or_above_within_unit_interval
+    description: pct_proficient_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND (pct_proficient_learner_or_above
+      < 0 OR pct_proficient_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_levels_sum_to_one_excluding_foster_care
+    description: 'The four achievement-level shares partition the tested population: where all four are
+      non-NULL they must sum to 1.0 within rounding (+/-0.02) on every row except demographic = ''foster_care''
+      (the documented source quirk where partially-suppressed and unassigned-level rows sum below 1).
+      Verified in bronze: every deviating row in every year is a Foster Care row; all other rows deviate
+      by at most 0.002.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE demographic != 'foster_care' AND pct_beginning_learner
+      IS NOT NULL AND pct_developing_learner IS NOT NULL AND pct_proficient_learner IS NOT NULL AND pct_distinguished_learner
+      IS NOT NULL AND ABS((pct_beginning_learner + pct_developing_learner + pct_proficient_learner + pct_distinguished_learner)
+      - 1.0) > 0.02
+    mustBe: 0
+  - type: sql
+    name: pct_developing_or_above_equals_level_sum
+    description: pct_developing_learner_or_above equals developing + proficient + distinguished within
+      rounding tolerance (+/-0.011, covering the 0.005 overshoot snap) wherever all summands are non-NULL.
+      Holds by construction — the column is derived from these summands.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner_or_above IS NOT NULL AND pct_developing_learner
+      IS NOT NULL AND pct_proficient_learner IS NOT NULL AND pct_distinguished_learner IS NOT NULL AND
+      ABS(pct_developing_learner_or_above - (pct_developing_learner + pct_proficient_learner + pct_distinguished_learner))
+      > 0.011
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_or_above_equals_level_sum
+    description: pct_proficient_learner_or_above equals proficient + distinguished within rounding tolerance
+      (+/-0.011) wherever both summands are non-NULL. Holds by construction.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND pct_proficient_learner
+      IS NOT NULL AND pct_distinguished_learner IS NOT NULL AND ABS(pct_proficient_learner_or_above -
+      (pct_proficient_learner + pct_distinguished_learner)) > 0.011
+    mustBe: 0
+  - type: sql
+    name: proficient_or_above_never_exceeds_developing_or_above
+    description: 'Nested cumulative thresholds: the proficient-or-above share can never exceed the developing-or-above
+      share (+0.001 float slack) where both are non-NULL.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND pct_developing_learner_or_above
+      IS NOT NULL AND pct_proficient_learner_or_above > pct_developing_learner_or_above + 0.001
+    mustBe: 0
+  - type: sql
+    name: level_count_never_exceeds_num_tested
+    description: 'No single achievement-level count can exceed the number tested in its cell. Verified:
+      zero violations in every bronze year.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND ((num_beginning_learner IS NOT
+      NULL AND num_beginning_learner > num_tested) OR (num_developing_learner IS NOT NULL AND num_developing_learner
+      > num_tested) OR (num_proficient_learner IS NOT NULL AND num_proficient_learner > num_tested) OR
+      (num_distinguished_learner IS NOT NULL AND num_distinguished_learner > num_tested))
+    mustBe: 0
+  - type: sql
+    name: level_counts_sum_never_exceed_num_tested
+    description: Where all four level counts and num_tested are non-NULL, the level counts sum to at most
+      num_tested (the four levels partition test-takers; the only source deviation — 28 state-level foster_care
+      rows — falls short, never over).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_beginning_learner IS NOT
+      NULL AND num_developing_learner IS NOT NULL AND num_proficient_learner IS NOT NULL AND num_distinguished_learner
+      IS NOT NULL AND (num_beginning_learner + num_developing_learner + num_proficient_learner + num_distinguished_learner)
+      > num_tested
+    mustBe: 0
+  - type: sql
+    name: level_counts_sum_equals_num_tested_below_state
+    description: 'On district- and school-level rows (district_code IS NOT NULL — quality SQL self-scopes
+      by geography NULL-ness), fully-unsuppressed cells reconcile exactly: the four level counts sum to
+      num_tested. The only source exceptions are 28 STATE-level foster_care rows (2022-2024), excluded
+      by the scope and documented in limitations.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NOT NULL AND num_tested IS NOT NULL AND
+      num_beginning_learner IS NOT NULL AND num_developing_learner IS NOT NULL AND num_proficient_learner
+      IS NOT NULL AND num_distinguished_learner IS NOT NULL AND (num_beginning_learner + num_developing_learner
+      + num_proficient_learner + num_distinguished_learner) != num_tested
+    mustBe: 0
+  - type: sql
+    name: pct_matches_count_share
+    description: Each published level share equals its level count divided by num_tested within one-decimal
+      source rounding (+/-0.0006 on the 0-1 scale) wherever count, share, and num_tested are all non-NULL.
+      Verified max bronze deviation 0.0005 — holds even on the foster_care shortfall rows (shares are
+      computed against num_tested).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested > 0 AND ((pct_beginning_learner
+      IS NOT NULL AND num_beginning_learner IS NOT NULL AND ABS(pct_beginning_learner - CAST(num_beginning_learner
+      AS DOUBLE) / num_tested) > 0.0006) OR (pct_developing_learner IS NOT NULL AND num_developing_learner
+      IS NOT NULL AND ABS(pct_developing_learner - CAST(num_developing_learner AS DOUBLE) / num_tested)
+      > 0.0006) OR (pct_proficient_learner IS NOT NULL AND num_proficient_learner IS NOT NULL AND ABS(pct_proficient_learner
+      - CAST(num_proficient_learner AS DOUBLE) / num_tested) > 0.0006) OR (pct_distinguished_learner IS
+      NOT NULL AND num_distinguished_learner IS NOT NULL AND ABS(pct_distinguished_learner - CAST(num_distinguished_learner
+      AS DOUBLE) / num_tested) > 0.0006))
+    mustBe: 0
+customProperties:
+- property: title
+  value: Georgia Milestones End-of-Grade Assessment by Grade
+- property: summary
+  value: Georgia Milestones End-of-Grade achievement levels by grade, subject, and demographic for schools,
+    districts, and the state, 2015-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2015-2024
+- property: schema_hash
+  value: 692af1c294d3905d0aeceba72f51ac9e4ab6c34b14fd9c9eb4fff20a69a28c7f
+- property: available_years
+  value:
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value:
+  - 2020

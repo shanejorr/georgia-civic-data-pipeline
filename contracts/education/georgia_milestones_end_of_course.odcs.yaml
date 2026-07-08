@@ -1,0 +1,740 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.georgia_milestones_end_of_course
+name: georgia_milestones_end_of_course
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Milestones End-of-Course (EOC) assessment results for high-school core content areas,
+    published for each of up to three administrations per school year (Winter mid-year retest, Spring
+    primary, Full-Year aggregate) at the state, district/system, and school level. Core metrics are the
+    count of students tested, the mean scale score, and the share of students at each of the four achievement
+    levels (Beginning, Developing, Proficient, Distinguished Learner) plus the two cumulative shares.
+    Literature subjects add a Reading Status split against a per-course Lexile threshold (9th Grade Literature
+    1050L through 2020; American Literature 1185L). Student Growth Percentile (SGP) metrics appear in
+    the source layout from Spring 2024 but carry data only from the 2024-2025 school year (Algebra: Concepts
+    & Connections and American Literature). Full-Year 2020-2021 uniquely includes enrolled_tested_rate,
+    reflecting COVID-era participation drops.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- georgia_milestones_end_of_course
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/georgia_milestones_end_of_course/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/georgia_milestones_end_of_course/**/*.parquet
+  format: parquet
+schema:
+- name: georgia_milestones_end_of_course
+  logicalType: object
+  physicalType: parquet
+  physicalName: georgia_milestones_end_of_course
+  description: georgia_milestones_end_of_course fact table, year-partitioned Parquet (split by detail
+    level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, administration, subject (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - administration
+    - subject
+  - property: key_metric
+    value: avg_scale_score
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/georgia_milestones_end_of_course/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2025), schools detail
+      query: SELECT * FROM georgia_milestones_end_of_course WHERE year = 2025 LIMIT 100
+    - description: District 601 in 2025
+      query: SELECT * FROM georgia_milestones_end_of_course WHERE district_code = '601' AND year = 2025
+        LIMIT 100
+    - description: Filter by administration = spring
+      query: SELECT * FROM georgia_milestones_end_of_course WHERE administration = 'spring' AND year =
+        2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: 'Ending calendar year of the school year (e.g., 2024 = school year 2023-2024). Winter
+      administrations are stored under the school year they fall inside: Winter 2014 EOC is the 2014-2015
+      mid-year retest, stored as year=2015.'
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district/system code (FK to districts dimension). School-level rows for
+      State/Commission Charter campuses use the 7-digit campus code (system 782/783 + school code) — 2015-2017
+      bronze published those rows under the bare system code and they are promoted here. NULL for state-level
+      rows.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (FK to schools dimension, composite with district_code). NULL
+      for district- and state-level rows.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: administration
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Which of the three publications a row comes from: winter = mid-year retest, spring =
+      primary end-of-year administration, full_year = fall+winter+spring aggregate. The three slices are
+      distinct cohorts, not duplicates.'
+    examples:
+    - 'spring'
+    enum:
+    - 'winter'
+    - 'spring'
+    - 'full_year'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Administration
+    - property: short_description
+      value: 'Which test window the row covers: winter retest, spring primary, or the full-year aggregate.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: subject
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Snake-case EOC content area. The tested slate changed over time: 8-10 subjects through
+      2020 (incl. 9th Grade Literature, Physical Science, Economics, two algebra and two geometry courses),
+      5 from 2021, and 4 from 2024 (american_literature_and_composition, algebra_concepts_and_connections,
+      biology, us_history). Full-Year 2020-2021''s 8th-grade Physical Science administration is folded
+      into physical_science.'
+    examples:
+    - 'biology'
+    enum:
+    - '9th_grade_literature_and_composition'
+    - 'algebra_concepts_and_connections'
+    - 'algebra_i'
+    - 'american_literature_and_composition'
+    - 'analytic_geometry'
+    - 'biology'
+    - 'coordinate_algebra'
+    - 'economics_business_free_enterprise'
+    - 'geometry'
+    - 'physical_science'
+    - 'us_history'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Subject
+    - property: short_description
+      value: The high-school course tested (e.g. biology, us_history, american_literature_and_composition).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: num_tested
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students tested. Never suppressed by the source — non-null on every row.
+    examples:
+    - 132
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested
+    - property: unit
+      value: count
+    - property: metric_component
+      value: denominator
+  - name: avg_scale_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Mean scale score on the Georgia Milestones EOC scale. Reported scores span roughly 400-650;
+      the contract enforces the full published EOC scale range of 140-820 (per-course bounds differ; Biology
+      spans the full range per the GaDOE EOC Score Interpretation Guide). Preserved on its natural scale.
+    examples:
+    - 525.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Scale Score
+    - property: short_description
+      value: Average end-of-course scale score (about 400-650 in practice); higher means stronger performance.
+    - property: unit
+      value: score
+    - property: value_min
+      value: 140
+    - property: value_max
+      value: 820
+    - property: key_metric
+      value: true
+  - name: scale_score_std_dev
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Standard deviation of the scale scores — a dispersion measure, NOT a bounded score. Units
+      are scale-score points; the value is always >= 0. Exempt from unit/range checks (it has no fixed
+      upper bound). Published only by Spring 2015 system-level files, Winter 2021 files, and every file
+      from Spring 2022 onward; NULL elsewhere.
+    examples:
+    - 57.4
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Scale Score Std Dev
+  - name: pct_beginning_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of tested students at the Beginning Learner level (0-1 scale; bronze 0-100 divided
+      by 100).
+    examples:
+    - 0.2113
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Beginning Learner
+    - property: unit
+      value: proportion
+  - name: pct_developing_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at Developing Learner (0-1 scale).
+    examples:
+    - 0.3333
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Developing Learner
+    - property: unit
+      value: proportion
+  - name: pct_proficient_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at Proficient Learner (0-1 scale).
+    examples:
+    - 0.3525
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Proficient Learner
+    - property: unit
+      value: proportion
+  - name: pct_distinguished_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at Distinguished Learner (0-1 scale).
+    examples:
+    - 0.1026
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Distinguished Learner
+    - property: unit
+      value: proportion
+  - name: pct_developing_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at Developing Learner or higher (= developing + proficient + distinguished). Published
+      by the source and preserved verbatim rather than re-derived.
+    examples:
+    - 0.7885
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Developing Learner or Above
+    - property: unit
+      value: proportion
+  - name: pct_proficient_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at Proficient Learner or higher (= proficient + distinguished). Published by the
+      source and preserved verbatim.
+    examples:
+    - 0.4551
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Proficient Learner or Above
+    - property: unit
+      value: proportion
+  - name: pct_below_grade_level_lexile
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Reading Status: share of tested students reading below the course''s Lexile threshold.
+      Populated only for literature subjects. The threshold is per course, not per year: 9th Grade Literature
+      uses 1050L (reported 2018-2020) and American Literature 1185L (reported 2018 onward; the 2018-2020
+      American Literature files label the threshold 1050L in their headers but the course moved to 1185L
+      from 2021).'
+    examples:
+    - 0.3397
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Below Grade Level Lexile
+    - property: unit
+      value: proportion
+  - name: pct_grade_level_or_above_lexile
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Reading Status: share reading at or above the Lexile threshold; complement of pct_below_grade_level_lexile.
+      Populated only for literature subjects.'
+    examples:
+    - 0.6603
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Grade Level or Above Lexile
+    - property: unit
+      value: proportion
+  - name: num_sgp_received
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of tested students who received a Student Growth Percentile. SGP columns exist
+      in the source layout from Spring 2024, but the 2024 Algebra CC sheets are empty templates — populated
+      data starts with the 2024-2025 school year (year=2025) for algebra_concepts_and_connections and
+      american_literature_and_composition. NULL elsewhere.
+    examples:
+    - 143
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number SGP Received
+    - property: unit
+      value: count
+  - name: sgp_median
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Median Student Growth Percentile (1-99 percentile rank, preserved on its natural scale
+      per data-cleaning-standards §4). Float64 because 2025 bronze publishes half-point medians (e.g.
+      61.5).
+    examples:
+    - 52.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: SGP Median
+    - property: unit
+      value: percentile
+  - name: pct_sgp_low_growth
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of SGP-scored students in the Low Growth band (0-1 scale).
+    examples:
+    - 0.3287
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent SGP Low Growth
+    - property: unit
+      value: proportion
+  - name: pct_sgp_typical_growth
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share in the Typical Growth band (0-1 scale).
+    examples:
+    - 0.3217
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent SGP Typical Growth
+    - property: unit
+      value: proportion
+  - name: pct_sgp_high_growth
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share in the High Growth band (0-1 scale).
+    examples:
+    - 0.3497
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent SGP High Growth
+    - property: unit
+      value: proportion
+  - name: enrolled_tested_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of enrolled students who actually tested. Published ONLY by the Full-Year 2020-2021
+      files (COVID participation year); NULL for every other administration.
+    examples:
+    - 0.9912
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Enrolled Tested Rate
+    - property: unit
+      value: proportion
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: administration_in_allowed_values
+    description: administration is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE administration IS NOT NULL AND administration NOT IN ('winter',
+      'spring', 'full_year')
+    mustBe: 0
+  - type: sql
+    name: subject_in_allowed_values
+    description: subject is one of the 11 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE subject IS NOT NULL AND subject NOT IN ('9th_grade_literature_and_composition',
+      'algebra_concepts_and_connections', 'algebra_i', 'american_literature_and_composition', 'analytic_geometry',
+      'biology', 'coordinate_algebra', 'economics_business_free_enterprise', 'geometry', 'physical_science',
+      'us_history')
+    mustBe: 0
+  - type: sql
+    name: num_tested_non_negative
+    description: num_tested is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested < 0
+    mustBe: 0
+  - type: sql
+    name: avg_scale_score_within_range
+    description: avg_scale_score is within its declared [140, 820] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_scale_score IS NOT NULL AND (avg_scale_score < 140
+      OR avg_scale_score > 820)
+    mustBe: 0
+  - type: sql
+    name: pct_beginning_learner_within_unit_interval
+    description: pct_beginning_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_beginning_learner IS NOT NULL AND (pct_beginning_learner
+      < 0 OR pct_beginning_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_developing_learner_within_unit_interval
+    description: pct_developing_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner IS NOT NULL AND (pct_developing_learner
+      < 0 OR pct_developing_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_learner_within_unit_interval
+    description: pct_proficient_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner IS NOT NULL AND (pct_proficient_learner
+      < 0 OR pct_proficient_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_distinguished_learner_within_unit_interval
+    description: pct_distinguished_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_distinguished_learner IS NOT NULL AND (pct_distinguished_learner
+      < 0 OR pct_distinguished_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_developing_learner_or_above_within_unit_interval
+    description: pct_developing_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner_or_above IS NOT NULL AND (pct_developing_learner_or_above
+      < 0 OR pct_developing_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_learner_or_above_within_unit_interval
+    description: pct_proficient_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND (pct_proficient_learner_or_above
+      < 0 OR pct_proficient_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_below_grade_level_lexile_within_unit_interval
+    description: pct_below_grade_level_lexile is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_below_grade_level_lexile IS NOT NULL AND (pct_below_grade_level_lexile
+      < 0 OR pct_below_grade_level_lexile > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_grade_level_or_above_lexile_within_unit_interval
+    description: pct_grade_level_or_above_lexile is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_grade_level_or_above_lexile IS NOT NULL AND (pct_grade_level_or_above_lexile
+      < 0 OR pct_grade_level_or_above_lexile > 1)
+    mustBe: 0
+  - type: sql
+    name: num_sgp_received_non_negative
+    description: num_sgp_received is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_sgp_received IS NOT NULL AND num_sgp_received < 0
+    mustBe: 0
+  - type: sql
+    name: sgp_median_within_range
+    description: sgp_median is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE sgp_median IS NOT NULL AND (sgp_median < 0 OR sgp_median
+      > 100)
+    mustBe: 0
+  - type: sql
+    name: pct_sgp_low_growth_within_unit_interval
+    description: pct_sgp_low_growth is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_low_growth IS NOT NULL AND (pct_sgp_low_growth
+      < 0 OR pct_sgp_low_growth > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_sgp_typical_growth_within_unit_interval
+    description: pct_sgp_typical_growth is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_typical_growth IS NOT NULL AND (pct_sgp_typical_growth
+      < 0 OR pct_sgp_typical_growth > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_sgp_high_growth_within_unit_interval
+    description: pct_sgp_high_growth is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_high_growth IS NOT NULL AND (pct_sgp_high_growth
+      < 0 OR pct_sgp_high_growth > 1)
+    mustBe: 0
+  - type: sql
+    name: enrolled_tested_rate_within_unit_interval
+    description: enrolled_tested_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE enrolled_tested_rate IS NOT NULL AND (enrolled_tested_rate
+      < 0 OR enrolled_tested_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: achievement_levels_sum_to_one
+    description: The four mutually exclusive achievement levels (Beginning, Developing, Proficient, Distinguished)
+      partition the tested population and sum to 1.0 (+/-0.02 rounding tolerance) wherever all four are
+      present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_beginning_learner IS NOT NULL AND pct_developing_learner
+      IS NOT NULL AND pct_proficient_learner IS NOT NULL AND pct_distinguished_learner IS NOT NULL AND
+      ABS(pct_beginning_learner + pct_developing_learner + pct_proficient_learner + pct_distinguished_learner
+      - 1.0) > 0.02
+    mustBe: 0
+  - type: sql
+    name: developing_or_above_consistent_with_components
+    description: The published cumulative pct_developing_learner_or_above equals developing + proficient
+      + distinguished (+/-0.02) wherever all are present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner_or_above IS NOT NULL AND pct_developing_learner
+      IS NOT NULL AND pct_proficient_learner IS NOT NULL AND pct_distinguished_learner IS NOT NULL AND
+      ABS(pct_developing_learner_or_above - (pct_developing_learner + pct_proficient_learner + pct_distinguished_learner))
+      > 0.02
+    mustBe: 0
+  - type: sql
+    name: proficient_or_above_consistent_with_components
+    description: The published cumulative pct_proficient_learner_or_above equals proficient + distinguished
+      (+/-0.02) wherever all are present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND pct_proficient_learner
+      IS NOT NULL AND pct_distinguished_learner IS NOT NULL AND ABS(pct_proficient_learner_or_above -
+      (pct_proficient_learner + pct_distinguished_learner)) > 0.02
+    mustBe: 0
+  - type: sql
+    name: lexile_reading_status_complement
+    description: The Reading Status split (below vs at-or-above the Lexile threshold) is a complement
+      pair summing to 1.0 (+/-0.02) wherever both are present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_below_grade_level_lexile IS NOT NULL AND pct_grade_level_or_above_lexile
+      IS NOT NULL AND ABS(pct_below_grade_level_lexile + pct_grade_level_or_above_lexile - 1.0) > 0.02
+    mustBe: 0
+  - type: sql
+    name: sgp_growth_bands_sum_to_one
+    description: The three SGP growth bands (Low, Typical, High) partition the SGP-scored students and
+      sum to 1.0 (+/-0.02) wherever all three are present.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_sgp_low_growth IS NOT NULL AND pct_sgp_typical_growth
+      IS NOT NULL AND pct_sgp_high_growth IS NOT NULL AND ABS(pct_sgp_low_growth + pct_sgp_typical_growth
+      + pct_sgp_high_growth - 1.0) > 0.02
+    mustBe: 0
+  - type: sql
+    name: lexile_metrics_only_on_literature_subjects
+    description: Reading Status (Lexile) metrics are published only for the two literature courses.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (pct_below_grade_level_lexile IS NOT NULL OR pct_grade_level_or_above_lexile
+      IS NOT NULL) AND subject NOT IN ('9th_grade_literature_and_composition', 'american_literature_and_composition')
+    mustBe: 0
+  - type: sql
+    name: sgp_metrics_only_on_sgp_subjects
+    description: 'SGP metrics are published only for Algebra: Concepts & Connections and American Literature
+      (first populated data year=2025).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (num_sgp_received IS NOT NULL OR sgp_median IS NOT NULL
+      OR pct_sgp_low_growth IS NOT NULL OR pct_sgp_typical_growth IS NOT NULL OR pct_sgp_high_growth IS
+      NOT NULL) AND subject NOT IN ('algebra_concepts_and_connections', 'american_literature_and_composition')
+    mustBe: 0
+  - type: sql
+    name: enrolled_tested_rate_only_in_full_year_2021
+    description: enrolled_tested_rate is a COVID-era column published only by the Full-Year 2020-2021
+      files.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE enrolled_tested_rate IS NOT NULL AND NOT (administration
+      = 'full_year' AND year = 2021)
+    mustBe: 0
+  - type: sql
+    name: num_tested_never_null
+    description: The source never suppresses the tested count — every surviving gold row carries num_tested
+      (rows with no metrics at all are filtered as template residue).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NULL
+    mustBe: 0
+  - type: sql
+    name: sgp_count_within_tested
+    description: num_sgp_received never exceeds num_tested — SGP recipients are a subset of tested students.
+      Verified on all 3,590 SGP-bearing rows in bronze.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_sgp_received IS NOT NULL AND num_tested IS NOT NULL
+      AND num_sgp_received > num_tested
+    mustBe: 0
+  - type: sql
+    name: scale_score_std_dev_non_negative
+    description: scale_score_std_dev is a standard deviation (dispersion of scale scores), so it is always
+      >= 0 where present. It is exempt from the bounded-score range check.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE scale_score_std_dev IS NOT NULL AND scale_score_std_dev
+      < 0
+    mustBe: 0
+customProperties:
+- property: title
+  value: Georgia Milestones End-of-Course (EOC) Results
+- property: summary
+  value: Georgia Milestones high-school end-of-course test results by school, district, and subject, 2015-2025.
+- property: source
+  value: Georgia Insights (GaDOE) — Georgia Milestones End-of-Course Assessment
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: triannual
+- property: year_range
+  value: 2015-2025
+- property: schema_hash
+  value: 1b2606493498433fc1aec50e789777559ca5c3e707a30e160287239d3c18d243
+- property: available_years
+  value:
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

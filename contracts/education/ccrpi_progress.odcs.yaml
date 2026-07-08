@@ -1,0 +1,597 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.ccrpi_progress
+name: ccrpi_progress
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Insights (GaDOE) CCRPI Progress component. Measures the rate at which students improve
+    year-over-year on Georgia Milestones assessments (English Language Arts and Mathematics) and the rate
+    at which English Learners progress toward English Language Proficiency (ELP), for every Georgia public
+    school, school district, and the state. Reports a 0-100 `indicator_score` plus, where published, a
+    0-100 improvement `indicator_target` and a green/yellow/red `ccrpi_flag`, per grade cluster (elementary/middle/high),
+    demographic subgroup, and indicator. 2020 is ELP-only (the only component GaDOE published that year).
+    For 2021 and 2022 GaDOE published only the ELP component in a band-movement schema: four Era-B-only
+    `pct_*` proportion columns partition English Learners by ELP band movement, and the composite ELP
+    rate continues the `indicator_score` series. Coverage: 2018-2025, 8 files, no gap years. This is the
+    deep-dive into the CCRPI Progress component only (by demographic and indicator); the overall CCRPI
+    score and the side-by-side scorecard of all five rolled-up component scores — including the rolled-up
+    Progress component score — live in the `ccrpi_scoring_by_component` topic (the CCRPI overview).'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- ccrpi_progress
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/ccrpi_progress/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/ccrpi_progress/**/*.parquet
+  format: parquet
+schema:
+- name: ccrpi_progress
+  logicalType: object
+  physicalType: parquet
+  physicalName: ccrpi_progress
+  description: ccrpi_progress fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic, grade_cluster,
+    indicator (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+    - grade_cluster
+    - indicator
+  - property: key_metric
+    value: indicator_score
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/ccrpi_progress/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), schools detail
+      query: SELECT * FROM ccrpi_progress WHERE year = 2025 LIMIT 100
+    - description: District 601 in 2025
+      query: SELECT * FROM ccrpi_progress WHERE district_code = '601' AND year = 2025 LIMIT 100
+    - description: Filter by grade_cluster = elementary
+      query: SELECT * FROM ccrpi_progress WHERE grade_cluster = 'elementary' AND year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (2024 = 2023-2024). Sourced from the bronze `School
+      Year` column, cross-checked against the filename year.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state-charter
+      systems. NULL for state-level aggregate rows. The bronze `ALL` sentinel (2021 state rows) becomes
+      NULL. FK to districts dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded; some bronze years strip the leading zero, others
+      pre-pad). NULL for district- and state-level aggregate rows (bronze encodes these as the literal
+      `ALL` or a true null depending on year). FK to schools dimension (composite key with district_code).
+    examples:
+    - '0194'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Canonical demographic code (FK to demographics dimension). `all` is the unfiltered total.
+      Race uses the combined `asian_pacific_islander` bucket — the source never publishes separate Asian
+      or Pacific Islander rows in any year. Era A ELA/Math rows cover all 10 groups; ELP rows cover all
+      10 groups in 2018 but only `english_learners` from 2019 on; the ELP-only releases (2020-2022) contain
+      only `english_learners`. Bronze label spelling drift (American Indian variants, Asian/Pacific spacing,
+      Disability casing) resolves via the shared demographic aliases.
+    examples:
+    - 'english_learners'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'hispanic'
+    - 'multiracial'
+    - 'native_american'
+    - 'students_with_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Which student group the row covers - `all`, a race, or a special population; ELP rows are
+        English-learners-only from 2019 on.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: grade_cluster
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Grade band the row measures: `elementary`, `middle`, or `high` (bronze single letters
+      E/M/H). A school spanning multiple bands has one row per band.'
+    examples:
+    - 'elementary'
+    enum:
+    - 'elementary'
+    - 'high'
+    - 'middle'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Cluster
+    - property: short_description
+      value: 'Grade band the row covers: elementary, middle, or high.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: indicator
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Progress indicator measured. Source labels drift (2018: `ELA Growth` / `Mathematics
+      Growth` / `ELP Progress`; 2019-2020: `English Language Arts` / `Mathematics` / `Progress Towards
+      Language Proficiency`; 2023+: spelled-out `...English Language Proficiency`) and collapse to three
+      canonical values so each forms a continuous time series. Every Era B (2021-2022) row is `progress_towards_elp`
+      — that era''s sheet has no indicator column because it reports only the ELP component.'
+    examples:
+    - 'progress_towards_elp'
+    enum:
+    - 'english_language_arts_growth'
+    - 'mathematics_growth'
+    - 'progress_towards_elp'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Indicator
+    - property: short_description
+      value: 'Which growth measure the row reports: ELA growth, math growth, or progress toward English
+        language proficiency.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: ccrpi_flag
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'CCRPI improvement-target flag: `green` (met target), `yellow`, `red`. `green_star` exists
+      in the §16 CCRPI vocabulary but never appears in this topic''s bronze (verified 2018-2025). Populated
+      ONLY on `progress_towards_elp` rows for the `english_learners` demographic in 2018, 2019, 2023,
+      2024, 2025 — ELA/Math growth rows and the 2020-2022 releases never carry a flag. Derived performance
+      attribute functionally determined by the rest of the row key, so excluded from the contract grain.'
+    examples:
+    - 'green'
+    enum:
+    - 'green'
+    - 'red'
+    - 'yellow'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: CCRPI Flag
+    - property: short_description
+      value: Improvement-target flag (green = met, yellow, red); set only on English-learner ELP-progress
+        rows.
+    - property: null_meaning
+      value: 'No flag published: bronze `NA` (target not applicable or suppressed), all ELA/Math rows,
+        all non-EL rows, and all of 2020-2022.'
+    - property: has_total
+      value: false
+  - name: indicator_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Progress score on the 0-100 CCRPI score scale (NOT a percentage — score columns are
+      exempt from the 0-1 convention). Era A: the bronze `Indicator Score`. Era B (2021-2022): the composite
+      `Progress Towards ELP Rate`, the same ELP-progress concept, so the ELP time series is continuous
+      across eras. The `100.00+` overage marker (2023: 4,131 cells; 2021: 202; 2022: 466) means progress
+      exceeded 100% and is mapped to exactly 100 before the numeric cast. Observed range 0-100 (the minimum
+      0.0 is a genuine 2021 Era B composite rate — 100% of that school''s English Learners had no positive
+      band movement; the Era A minimum is 3.13).'
+    examples:
+    - 82.72
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Indicator Score
+    - property: short_description
+      value: Progress (growth) score on a 0-100 scale; NULL when suppressed or not applicable.
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Suppressed by GaDOE (`TFS` — Too Few Students) or not applicable/not published (`NA`).
+    - property: key_metric
+      value: true
+  - name: indicator_target
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ELP improvement target on the same 0-100 score scale as indicator_score. Populated ONLY
+      on `progress_towards_elp` rows for the `english_learners` demographic in 2018, 2019, 2023, 2024,
+      2025 (Era B bronze has no target column; 2020 published none). Observed range 5.74-90.
+    examples:
+    - 75.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Indicator Target
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Bronze `NA` (no target applies — all ELA/Math rows, all non-EL rows, all of 2020-2022) or
+        `TFS` (target suppressed for small N).
+  - name: pct_no_positive_movement
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of English Learners with no positive ELP band movement. 0-1 decimal scale (bronze
+      0-100, divided by 100). Era B (2021-2022) only; 100% NULL in every Era A year. The four band columns
+      partition the EL population (sum = 1.0 within rounding).
+    examples:
+    - 0.1963
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent No Positive Movement
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Era A row (column exists only in the 2021-2022 schema), or suppressed (`TFS`) — Era B suppression
+        is all-or-nothing across the four band columns and the composite rate.
+  - name: pct_moved_less_than_one_band
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of English Learners whose ELP growth was positive but less than one band. 0-1 decimal
+      scale (bronze 0-100, divided by 100). Era B (2021-2022) only; 100% NULL in every Era A year.
+    examples:
+    - 0.1586
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Moved Less Than One Band
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Era A row (column exists only in the 2021-2022 schema), or suppressed (`TFS`).
+  - name: pct_moved_one_band
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of English Learners who moved up exactly one ELP band. 0-1 decimal scale (bronze
+      0-100, divided by 100). Era B (2021-2022) only; 100% NULL in every Era A year.
+    examples:
+    - 0.2487
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Moved One Band
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Era A row (column exists only in the 2021-2022 schema), or suppressed (`TFS`).
+  - name: pct_moved_more_than_one_band
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of English Learners who moved up more than one ELP band. 0-1 decimal scale (bronze
+      0-100, divided by 100). Era B (2021-2022) only; 100% NULL in every Era A year.
+    examples:
+    - 0.3964
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Moved More Than One Band
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Era A row (column exists only in the 2021-2022 schema), or suppressed (`TFS`).
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 10 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'economically_disadvantaged', 'english_learners', 'hispanic',
+      'multiracial', 'native_american', 'students_with_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: grade_cluster_in_allowed_values
+    description: grade_cluster is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_cluster IS NOT NULL AND grade_cluster NOT IN ('elementary',
+      'high', 'middle')
+    mustBe: 0
+  - type: sql
+    name: indicator_in_allowed_values
+    description: indicator is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE indicator IS NOT NULL AND indicator NOT IN ('english_language_arts_growth',
+      'mathematics_growth', 'progress_towards_elp')
+    mustBe: 0
+  - type: sql
+    name: ccrpi_flag_in_allowed_values
+    description: ccrpi_flag is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE ccrpi_flag IS NOT NULL AND ccrpi_flag NOT IN ('green',
+      'red', 'yellow')
+    mustBe: 0
+  - type: sql
+    name: indicator_score_within_range
+    description: indicator_score is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE indicator_score IS NOT NULL AND (indicator_score < 0 OR
+      indicator_score > 100)
+    mustBe: 0
+  - type: sql
+    name: indicator_target_within_range
+    description: indicator_target is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE indicator_target IS NOT NULL AND (indicator_target < 0
+      OR indicator_target > 100)
+    mustBe: 0
+  - type: sql
+    name: pct_no_positive_movement_within_unit_interval
+    description: pct_no_positive_movement is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_no_positive_movement IS NOT NULL AND (pct_no_positive_movement
+      < 0 OR pct_no_positive_movement > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_moved_less_than_one_band_within_unit_interval
+    description: pct_moved_less_than_one_band is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_moved_less_than_one_band IS NOT NULL AND (pct_moved_less_than_one_band
+      < 0 OR pct_moved_less_than_one_band > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_moved_one_band_within_unit_interval
+    description: pct_moved_one_band is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_moved_one_band IS NOT NULL AND (pct_moved_one_band
+      < 0 OR pct_moved_one_band > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_moved_more_than_one_band_within_unit_interval
+    description: pct_moved_more_than_one_band is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_moved_more_than_one_band IS NOT NULL AND (pct_moved_more_than_one_band
+      < 0 OR pct_moved_more_than_one_band > 1)
+    mustBe: 0
+  - type: sql
+    name: band_movement_partitions_to_one
+    description: 'The four ELP band-movement proportions partition the EL population: where all four are
+      populated they sum to 1.0 (+/-0.005). Verified on both Era B bronze files: max deviation 0.0002
+      (independent rounding of each share to 2 decimals on the 0-100 scale).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE pct_no_positive_movement IS NOT NULL AND pct_moved_less_than_one_band
+      IS NOT NULL AND pct_moved_one_band IS NOT NULL AND pct_moved_more_than_one_band IS NOT NULL AND
+      ABS(pct_no_positive_movement + pct_moved_less_than_one_band + pct_moved_one_band + pct_moved_more_than_one_band
+      - 1.0) > 0.005
+    mustBe: 0
+  - type: sql
+    name: band_movement_suppression_all_or_nothing
+    description: 'Era B suppression is all-or-nothing: within 2021-2022, a row has the four band columns
+      and indicator_score either all populated or all NULL. Verified on both Era B bronze files: 0 partially
+      suppressed rows.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2021, 2022) AND ((pct_no_positive_movement IS
+      NULL) <> (pct_moved_less_than_one_band IS NULL) OR (pct_no_positive_movement IS NULL) <> (pct_moved_one_band
+      IS NULL) OR (pct_no_positive_movement IS NULL) <> (pct_moved_more_than_one_band IS NULL) OR (pct_no_positive_movement
+      IS NULL) <> (indicator_score IS NULL))
+    mustBe: 0
+  - type: sql
+    name: band_movement_era_b_only
+    description: The four band-movement columns exist only in the 2021-2022 bronze schema — structurally
+      NULL in every other year.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year NOT IN (2021, 2022) AND (pct_no_positive_movement
+      IS NOT NULL OR pct_moved_less_than_one_band IS NOT NULL OR pct_moved_one_band IS NOT NULL OR pct_moved_more_than_one_band
+      IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: indicator_target_flag_only_on_elp_indicator
+    description: indicator_target and ccrpi_flag are published only for the Progress Towards ELP indicator
+      — ELA/Math growth rows never carry either (verified in every Era A bronze file, including 2018).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (indicator_target IS NOT NULL OR ccrpi_flag IS NOT NULL)
+      AND indicator <> 'progress_towards_elp'
+    mustBe: 0
+  - type: sql
+    name: indicator_target_flag_only_for_english_learners
+    description: indicator_target and ccrpi_flag are published only for the english_learners demographic
+      — in 2018, where ELP rows span all 10 demographic groups, the 9 non-EL groups carry scores but never
+      a target or flag (verified in bronze).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (indicator_target IS NOT NULL OR ccrpi_flag IS NOT NULL)
+      AND demographic <> 'english_learners'
+    mustBe: 0
+  - type: sql
+    name: indicator_target_flag_absent_2020_through_2022
+    description: 'No targets or flags exist in 2020-2022: the 2020 ELP-only release published neither,
+      and the Era B (2021-2022) schema has no target/flag columns.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2020, 2021, 2022) AND (indicator_target IS NOT
+      NULL OR ccrpi_flag IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: elp_only_years_english_learners_only
+    description: 'The ELP-only releases (2020, 2021, 2022) contain only the english_learners demographic
+      (verified in bronze: one Reporting Label value in each of those files).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2020, 2021, 2022) AND demographic <> 'english_learners'
+    mustBe: 0
+  - type: sql
+    name: elp_only_years_elp_indicator_only
+    description: 'The ELP-only releases (2020, 2021, 2022) contain only the progress_towards_elp indicator
+      (verified in bronze: 2020 has a single Indicator value; the Era B sheets have no indicator column
+      at all).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2020, 2021, 2022) AND indicator <> 'progress_towards_elp'
+    mustBe: 0
+  - type: sql
+    name: elp_rows_english_learners_only_post_2018
+    description: From 2019 on, ELP-indicator rows exist only for the english_learners demographic — only
+      2018 publishes ELP rows for all 10 demographic groups (verified in bronze; see the structure doc's
+      Corrections section). Year-pinned to the verified years so a legitimate future re-expansion of ELP
+      demographic coverage cannot break the pipeline; 2020-2022 are covered by elp_only_years_english_learners_only.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2019, 2023, 2024, 2025) AND indicator = 'progress_towards_elp'
+      AND demographic <> 'english_learners'
+    mustBe: 0
+customProperties:
+- property: title
+  value: CCRPI Progress
+- property: summary
+  value: Georgia student year-over-year growth scores (the CCRPI Progress component) by indicator, grade
+    cluster, and demographic subgroup, 2018-2025.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2018-2025
+- property: schema_hash
+  value: b319ac004bb30ea44d0fa6225397ebe585293af5eae3d8abaa5afd7e09d645e8
+- property: available_years
+  value:
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

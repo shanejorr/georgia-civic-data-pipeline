@@ -1,0 +1,442 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.law_enforcement_employees
+name: law_enforcement_employees
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Law-enforcement staffing in Georgia from the FBI''s Uniform Crime Reporting police-employee
+    (LEE) collection: sworn officers and civilian employees per county and year, 1960 onward, split by
+    sex (male / female / all), as-reported head counts (typically October 31). Reporting is voluntary
+    and coverage grew over time — 44-76 Georgia agencies reported per year in the 1960s vs roughly 350-530
+    from 2014 on — so every row carries an agencies_reporting companion count and county-years with no
+    reporting agency are absent, never zero-filled: long-run change mixes staffing change with reporting-coverage
+    change. Employees are attributed to the reporting agency''s primary county via the ORI-to-county crosswalk;
+    statewide agencies (GBI, State Patrol, Ports Authority) count toward state rows only, so the state
+    total exceeds the county sum.'
+  usage: 'Cite the FBI Crime Data Explorer (cde.ucr.cjis.gov), Law Enforcement Employees data. Counts
+    are voluntary as-reported head counts: read any trend alongside agencies_reporting (coverage grew
+    roughly tenfold between the 1960s and the 2010s), and never treat a missing county-year as zero staffing.
+    Filter demographic = ''all'' for totals; male and female rows partition every count exactly. Per-capita
+    staffing rates require an external population denominator such as Census county population — agency
+    jurisdiction populations overlap (a city''s residents are also in the sheriff''s county jurisdiction)
+    and are deliberately not served.'
+  limitations: 'State rows have NULL county_fips. Reporting is voluntary and coverage varies by year (44-76
+    Georgia agencies in the 1960s vs ~350-530 from 2014 on): county-years with no reporting agency are
+    absent rather than zero, and long-run comparisons mix staffing change with coverage change — use agencies_reporting
+    to separate them. Employees are attributed to the reporting agency''s primary county: multi-county
+    agencies are not split, and statewide agencies (GBI, State Patrol, Ports Authority) appear in state
+    rows only, so the state row strictly exceeds the county sum in most years. Other agencies with statewide
+    or regional operations but a primary county on file (e.g. DOT police, DNR region offices, MARTA transit
+    police) are counted in their headquarters county — mostly Fulton, roughly 270 of Fulton''s ~4,000
+    officers in 2024. The source''s agency service-population column (and the derived employees-per-1,000
+    rate) is deliberately excluded: overlapping city/county jurisdictions make county sums of agency populations
+    meaningless as a denominator. A small number of agency-years report zero employees and are preserved
+    as reported. The source has no suppression. Seven provably erroneous agency-year filings are excluded
+    from the aggregates: a Department of Corrections unit that filed the entire department''s statewide
+    staffing under Fulton County in 1994, 1995, and 1998; a State Patrol post that duplicated the statewide
+    State Patrol filing under Lowndes County in 1993 and 1994; an impossible Bowdon 2016 filing (Carroll
+    County); and a Cobb County Park Rangers 2001 filing duplicating the county police department''s. Occasional
+    implausible single-agency filings may survive in this voluntary as-reported source.'
+tags:
+- criminal_justice
+- fbi crime data explorer, law enforcement employees
+- law_enforcement_employees
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/law_enforcement_employees/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/law_enforcement_employees/**/*.parquet
+  format: parquet
+schema:
+- name: law_enforcement_employees
+  logicalType: object
+  physicalType: parquet
+  physicalName: law_enforcement_employees
+  description: law_enforcement_employees fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, county_fips, demographic (geography columns are NULL at
+    higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: fbi_cde
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+  - property: key_metric
+    value: officer_count
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/law_enforcement_employees/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), counties detail
+      query: SELECT * FROM law_enforcement_employees WHERE year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year of the staffing snapshot (typically an October 31 head count).
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the reporting agency's primary county;
+      FK to the counties dimension. NULL on statewide rollup rows. Agencies spanning multiple counties
+      are attributed wholly to their primary county; statewide agencies with no primary county (GBI, State
+      Patrol, Ports Authority) count toward state rows only, so the state row exceeds the county sum.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rollup rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Employee sex: male and female partition each count exactly (male + female = all); the
+      all row is the aggregate lane. Filter demographic = ''all'' for headline staffing totals and exclude
+      it when summing across sexes.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'female'
+    - 'male'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: officer_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Full-time sworn law-enforcement officers employed by agencies attributed to the county
+      at the annual snapshot, for the row's sex slice. As-reported voluntary UCR counts — interpret trends
+      alongside agencies_reporting, especially before the 2010s. A small number of agency-years report
+      zero employees (defunct or merged agencies filing zero reports); these are preserved as reported.
+    examples:
+    - 1748
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Officer Count
+    - property: short_description
+      value: Sworn officers employed by the county's reporting agencies in the year.
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: civilian_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Full-time civilian (non-sworn) employees of agencies attributed to the county at the
+      annual snapshot, for the row's sex slice. officer_count + civilian_count = total_employee_count.
+    examples:
+    - 512
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Civilian Count
+    - property: unit
+      value: count
+  - name: total_employee_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Total police employees (sworn officers plus civilian employees) of agencies attributed
+      to the county, for the row's sex slice. Equals officer_count + civilian_count exactly.
+    examples:
+    - 2260
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Total Employee Count
+    - property: unit
+      value: count
+  - name: agencies_reporting
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Coverage companion: the number of agencies whose report is aggregated into the row —
+      for county rows, agencies whose primary county is this county; for statewide rows, all reporting
+      Georgia agencies (including statewide agencies with no primary county). Constant across the sex
+      slices of a county-year (it describes the reporting roster, not the sex split). Reporting is voluntary:
+      44-76 agencies per year in the 1960s vs ~350-530 from 2014 on, so rising staffing counts partly
+      reflect rising coverage. Zero-employee reports still count as reporting.'
+    examples:
+    - 18
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Agencies Reporting
+    - property: short_description
+      value: Law-enforcement agencies that filed a police-employee report for the year (county roster
+        on county rows, statewide roster on state rows).
+    - property: unit
+      value: count
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'female', 'male')
+    mustBe: 0
+  - type: sql
+    name: officer_count_non_negative
+    description: officer_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE officer_count IS NOT NULL AND officer_count < 0
+    mustBe: 0
+  - type: sql
+    name: civilian_count_non_negative
+    description: civilian_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE civilian_count IS NOT NULL AND civilian_count < 0
+    mustBe: 0
+  - type: sql
+    name: total_employee_count_non_negative
+    description: total_employee_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE total_employee_count IS NOT NULL AND total_employee_count
+      < 0
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_non_negative
+    description: agencies_reporting is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NOT NULL AND agencies_reporting <
+      0
+    mustBe: 0
+  - type: sql
+    name: officer_plus_civilian_equals_total
+    description: Sworn officers and civilian employees partition total police employees, so the two components
+      must sum exactly to total_employee_count on every row (exact in bronze on all Georgia agency-years).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE officer_count IS NOT NULL AND civilian_count IS NOT NULL
+      AND total_employee_count IS NOT NULL AND officer_count + civilian_count != total_employee_count
+    mustBe: 0
+  - type: sql
+    name: sex_partition_sums_to_all
+    description: 'male and female rows partition every count exactly (§5a): within each year-county cell,
+      male + female must equal the all row for officer_count, civilian_count, and total_employee_count.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN demographic = 'all' THEN officer_count
+      END) AS a_off, MAX(CASE WHEN demographic = 'male' THEN officer_count END) AS m_off, MAX(CASE WHEN
+      demographic = 'female' THEN officer_count END) AS f_off, MAX(CASE WHEN demographic = 'all' THEN
+      civilian_count END) AS a_civ, MAX(CASE WHEN demographic = 'male' THEN civilian_count END) AS m_civ,
+      MAX(CASE WHEN demographic = 'female' THEN civilian_count END) AS f_civ, MAX(CASE WHEN demographic
+      = 'all' THEN total_employee_count END) AS a_tot, MAX(CASE WHEN demographic = 'male' THEN total_employee_count
+      END) AS m_tot, MAX(CASE WHEN demographic = 'female' THEN total_employee_count END) AS f_tot FROM
+      {object} GROUP BY year, county_fips) WHERE (a_off IS NOT NULL AND m_off IS NOT NULL AND f_off IS
+      NOT NULL AND m_off + f_off != a_off) OR (a_civ IS NOT NULL AND m_civ IS NOT NULL AND f_civ IS NOT
+      NULL AND m_civ + f_civ != a_civ) OR (a_tot IS NOT NULL AND m_tot IS NOT NULL AND f_tot IS NOT NULL
+      AND m_tot + f_tot != a_tot)
+    mustBe: 0
+  - type: sql
+    name: three_demographic_rows_per_cell
+    description: Every year-county cell (and every statewide year cell) is emitted with exactly its all,
+      male, and female rows — a different count means the tidy unpivot broke.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, COUNT(*) AS n FROM {object} GROUP BY year,
+      county_fips) WHERE n != 3
+    mustBe: 0
+  - type: sql
+    name: state_total_covers_county_sum
+    description: The state row sums ALL reporting agencies including statewide (no-county) agencies like
+      the State Patrol and GBI, so for every year the state officer_count at demographic = 'all' must
+      be >= the county sum (strictly greater whenever a statewide agency reported).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, MAX(CASE WHEN county_fips IS NULL THEN officer_count END)
+      AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN officer_count END) AS county_sum FROM
+      {object} WHERE demographic = 'all' GROUP BY year) WHERE county_sum IS NOT NULL AND (state_total
+      IS NULL OR state_total < county_sum)
+    mustBe: 0
+  - type: sql
+    name: state_agencies_reporting_covers_county_sum
+    description: The statewide reporting roster includes every county-attributed agency plus the statewide
+      agencies, so per year the state agencies_reporting must be >= the sum of county agencies_reporting.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, MAX(CASE WHEN county_fips IS NULL THEN agencies_reporting
+      END) AS state_n, SUM(CASE WHEN county_fips IS NOT NULL THEN agencies_reporting END) AS county_n
+      FROM {object} WHERE demographic = 'all' GROUP BY year) WHERE county_n IS NOT NULL AND (state_n IS
+      NULL OR state_n < county_n)
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_constant_within_year_county
+    description: agencies_reporting describes the year's reporting roster for the geography, not the sex
+      slice — it must be identical on the all, male, and female rows of a year-county cell.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, COUNT(DISTINCT agencies_reporting) AS n FROM
+      {object} GROUP BY year, county_fips) WHERE n > 1
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_at_least_one
+    description: Rows exist only for county-years (or state-years) with at least one filed report — a
+      zero or NULL roster count means the aggregation broke.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NULL OR agencies_reporting < 1
+    mustBe: 0
+customProperties:
+- property: title
+  value: Law Enforcement Employees by County
+- property: summary
+  value: Sworn-officer and civilian staffing of Georgia law-enforcement agencies (FBI UCR police-employee
+    data), by county, year, and sex, 1960 onward.
+- property: source
+  value: FBI Crime Data Explorer, Law Enforcement Employees (LEE) bulk file
+- property: source_url
+  value: https://cde.ucr.cjis.gov
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 1960-2025
+- property: schema_hash
+  value: 85ba94219990141b9b8433a2c7ebd217207bc964f6c786c1e6171783e5e6d868
+- property: available_years
+  value:
+  - 1960
+  - 1961
+  - 1962
+  - 1963
+  - 1964
+  - 1965
+  - 1966
+  - 1967
+  - 1968
+  - 1969
+  - 1970
+  - 1971
+  - 1972
+  - 1973
+  - 1974
+  - 1975
+  - 1976
+  - 1977
+  - 1978
+  - 1979
+  - 1980
+  - 1981
+  - 1982
+  - 1983
+  - 1984
+  - 1985
+  - 1986
+  - 1987
+  - 1988
+  - 1989
+  - 1990
+  - 1991
+  - 1992
+  - 1993
+  - 1994
+  - 1995
+  - 1996
+  - 1997
+  - 1998
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

@@ -1,0 +1,806 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.parole_decisions
+name: parole_decisions
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: Executive-clemency and parole decision metrics of the Georgia State Board of Pardons and Paroles,
+    statewide by state fiscal year (July 1 - June 30; the year value is the fiscal year's END year), extracted
+    from the Board's narrative annual-report PDFs for FY2001-FY2025. Covers prison releases by Board action
+    (total and by release type), parole-guidelines and life-sentence case decisions, parole revocations,
+    discharges, pardons and restorations of civil and political rights, clemency votes, the parole-supervision
+    population and successful-completion rate, and agency expenditures. Metric availability varies with
+    the reports' changing designs — a metric is NULL in years whose report did not publish it (this source
+    has no suppression). House Bill 310 moved parole field supervision from the Board to the Department
+    of Community Supervision effective FY2016; the supervision_era column flags the break so supervision-series
+    metrics are never pooled across it. FY2015 was never published by the agency and is a true gap in
+    the series.
+  usage: 'Cite the Georgia State Board of Pardons and Paroles annual reports. Statewide only — this topic
+    has no county breakdown and does not join the counties dimension. The fiscal-year value is the END
+    year of the July-June state fiscal year. Filter or group by supervision_era before comparing supervision-series
+    metrics (population, completion rate, revocations, expenditures) across years: House Bill 310 moved
+    parole supervision to the Department of Community Supervision effective FY2016 and the two eras are
+    not comparable. The clemency-decision series (total_releases, guidelines and life-sentence decisions,
+    pardons) is continuous across the break. NULL always means ''not published that year'', never zero
+    and never suppression.'
+  limitations: 'Values are extracted from narrative annual-report PDFs whose designs change across three
+    layout eras; every value is verified at transform time against published component-sum identities,
+    pinned authoring-time anchors from a second extraction path, and adjacent-report restatements. FY2015
+    was never published by the agency and is a true gap — never interpolate across it. FY2016 exists in
+    bronze twice; only the standard-layout report is ingested (the 2-up spread duplicate is provenance
+    only). The FY2002 report is a scan and the FY2007/FY2008 clemency tables are page images; their values
+    were hand-transcribed from 200-dpi renders with page-level provenance recorded in the transform, and
+    pass the same sum checks as parsed years. Metric coverage is era-scoped: a NULL means that year''s
+    report did not publish the figure (this source has no suppression). Only fiscal years 2000 onward
+    are served (the series starts at FY2001). Supervision-series metrics break at FY2016 (House Bill 310;
+    see supervision_era) and expenditure totals are as published in nominal dollars with era-specific
+    scope. The reports'' cost-avoidance and cost-per-day figures are intentionally not served: their published
+    basis changes across eras (per-day parole-vs-prison comparisons early on, an aggregate annual cost-avoidance
+    dollar figure later) and the values appear only in chart labels and prose that text extraction cannot
+    capture reliably — total_expenditures is the only cost metric served. Statewide grain only — no county,
+    demographic, or offense-level detail exists in the source.'
+tags:
+- criminal_justice
+- georgia state board of pardons and paroles — annual reports, fy2001-fy2025
+- parole_decisions
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/parole_decisions/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/parole_decisions/**/*.parquet
+  format: parquet
+schema:
+- name: parole_decisions
+  logicalType: object
+  physicalType: parquet
+  physicalName: parole_decisions
+  description: parole_decisions fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, supervision_era.
+  customProperties:
+  - property: sub_topic
+    value: pardons_paroles
+  - property: detail_levels
+    value:
+    - states
+  - property: default_detail
+    value: states
+  - property: grain
+    value:
+    - year
+    - supervision_era
+  - property: key_metric
+    value: total_releases
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/parole_decisions/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value: []
+  - property: example_queries
+    value:
+    - description: Latest year (2025), states detail
+      query: SELECT * FROM parole_decisions WHERE year = 2025 LIMIT 100
+    - description: Filter by supervision_era = dcs
+      query: SELECT * FROM parole_decisions WHERE supervision_era = 'dcs' AND year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: State fiscal year END year (Georgia FY runs July 1 - June 30, so 2025 = 2024-07-01 through
+      2025-06-30). FY2015 is absent because the agency never published an FY2015 annual report — the gap
+      is real, not a processing artifact.
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: supervision_era
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Methodological-era flag for the 2015 House Bill 310 break: ''board'' (FY2001-FY2014)
+      years, when the Board''s own Field Operations division supervised parolees; ''dcs'' (FY2016-FY2025)
+      years, after supervision moved to the Department of Community Supervision. Supervision-series metrics
+      (parole_population_start/_end, parole_completion_rate, parole_revocations, total_expenditures) are
+      not comparable across the two eras and must never be pooled or charted as one continuous series
+      across FY2015. The clemency-decision series (releases, guidelines and life decisions, pardons) is
+      the continuous one.'
+    examples:
+    - 'dcs'
+    enum:
+    - 'board'
+    - 'dcs'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Supervision Era
+    - property: short_description
+      value: 'Who supervised parolees: the Parole Board itself (through FY2014) or the Dept. of Community
+        Supervision (FY2016+).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: total_releases
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Total offenders released from prison to parole-system supervision by Board clemency action
+      during the fiscal year, summing all release types (parole certificates, out-of-state parole orders,
+      supervised reprieves, conditional transfers, commutations, medical reprieves, ICE orders). Published
+      as 'TOTAL RELEASES' (FY2001-FY2013), in prose as offenders 'released to parole supervision by Board
+      action' (FY2009), and as 'Total Prison Releases by Parole' (FY2014-FY2025) — the published component
+      breakdowns sum exactly to this total in every year that prints them, confirming the labels describe
+      the same measure. Present in all 24 published years; the only metric with full coverage.
+    examples:
+    - 5588
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Total Releases
+    - property: short_description
+      value: Offenders released from prison by Parole Board action during the fiscal year (all release
+        types combined).
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+    - property: key_metric
+      value: true
+  - name: parole_releases
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Offenders released via the 'Parole' release action — the largest release type in the
+      FY2001-FY2013 clemency-action tables. NULL from FY2014 onward, when the reports replaced this line
+      with separate 'Parole Certificates' and 'Out-of-State Parole Orders' lines (see parole_certificates);
+      the two generations are related but not provably identical, so they are kept as separate columns
+      rather than pooled. Also NULL for FY2009 (that year's slim report published no release-type breakdown).
+    examples:
+    - 10828
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Parole Releases
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: parole_certificates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Parole certificates issued ('Parole Certificates' line, FY2014-FY2025) — in-state parole
+      releases; out-of-state parole orders are published separately and are not included. NULL before
+      FY2014, when the tables printed a single 'Parole' line instead (see parole_releases).
+    examples:
+    - 4037
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Parole Certificates
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: supervised_reprieves
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Offenders released on supervised reprieve during the fiscal year. FY2001-FY2013: the
+      single ''Supervised Reprieve'' release-action line; FY2014-FY2025: the ''Supervised Reprieves''
+      line, which excludes the separately published out-of-state supervised reprieves. NULL FY2009.'
+    examples:
+    - 409
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Supervised Reprieves
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: conditional_transfers
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Offenders released by conditional transfer during the fiscal year. FY2001-FY2013: the
+      single ''Conditional Transfer'' line; FY2014-FY2025: the ''Conditional Transfers'' line, which excludes
+      the separately published out-of-state conditional transfers. NULL FY2009.'
+    examples:
+    - 710
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Conditional Transfers
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: commutations
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Offenders RELEASED from prison by commutation during the fiscal year (the commutation
+      release action — distinct from the ''Commutation Reducing Sentence'' board action, which is not
+      served). Genuinely volatile: near zero in most early years, then e.g. 1,357 (FY2013), 3,119 (FY2014),
+      2,850 (FY2016), 918 (FY2020) as published — reflecting real policy waves, not extraction error (values
+      are verified against the published release-total sum). NULL FY2009.'
+    examples:
+    - 0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Commutations
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: guidelines_decisions_total
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Total parole-guidelines decisions rendered during the fiscal year: ''TOTAL DECISIONS
+      UNDER GUIDELINES'' (FY2001-FY2007) and ''Total Guidelines Decisions'' (FY2016-FY2025, which the
+      FY2016-FY2017 reports break into initial + other decisions). NULL FY2008-FY2014, when the reports
+      published only INITIAL guidelines decisions (see guidelines_decisions_initial) — the two definitions
+      are kept in separate columns, never pooled.'
+    examples:
+    - 13743
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Guidelines Decisions Total
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: guidelines_decisions_initial
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: INITIAL parole-guidelines decisions ('INITIAL DECISIONS UNDER GUIDELINES', FY2008 and
+      FY2010-FY2014; 'Initial (Decisions Under )Guidelines (Decisions)', FY2016-FY2017) — first-time guideline
+      decisions, excluding reconsiderations and other subsequent decisions. In FY2016-FY2017 initial +
+      other guidelines decisions sum exactly to guidelines_decisions_total. NULL elsewhere.
+    examples:
+    - 6888
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Guidelines Decisions Initial
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: life_cases_granted
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Life-sentence parole cases GRANTED during the fiscal year ('Grant Parole to Life Cases'
+      FY2001-FY2013; 'Life Sentence(d) Cases Granted (Parole)' FY2014-FY2023; 'Life Sentence Cases Granted/released'
+      FY2024-FY2025, which counts grants including those released). Granted + denied equals life_decisions_total
+      in every published year. NULL FY2009.
+    examples:
+    - 123
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Life Cases Granted
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: life_cases_denied
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Life-sentence parole cases DENIED during the fiscal year ('Deny Parole to Life Cases'
+      / 'Life Sentence(d) Cases Denied (Parole)'). NULL FY2009.
+    examples:
+    - 2154
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Life Cases Denied
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: life_decisions_total
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Total life-sentence parole case decisions (grants + denials) during the fiscal year.
+      Equals life_cases_granted + life_cases_denied in every published year (enforced as a quality check).
+      NULL FY2009.
+    examples:
+    - 2277
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Life Decisions Total
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: parole_revocations
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Parole violators whose parole the Board revoked during the fiscal year, returning them
+      to prison. ''TOTAL PAROLE REVOCATIONS'' table line FY2001-FY2013; prose ''the Board revoked N parole
+      violators'' FY2014-FY2025 (the FY2025 report''s FY21-FY25 bar chart restates the recent series,
+      verifying the prose values). A supervision-series metric: before FY2016 violations were detected
+      by the Board''s own field officers, from FY2016 by DCS officers reporting to the Board — compare
+      across supervision_era with caution. The technical-vs-new-offense split is not consistently published
+      and is not served. NULL FY2009.'
+    examples:
+    - 1273
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Parole Revocations
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: total_discharges
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Offenders discharged from parole-system supervision during the fiscal year. FY2001-FY2013
+      'TOTAL DISCHARGES' includes discharges from parole, from supervised reprieve, and commutation-to-discharge;
+      FY2014-FY2025 'Total Discharges from Parole' is the parole-discharge count as published — the pre/post-2014
+      definitions differ slightly, and the FY2016+ years sit in the DCS supervision era. NULL FY2009.
+    examples:
+    - 4729
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Total Discharges
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: pardons_granted
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Pardons granted by the Board during the fiscal year ('Pardon' board-action line FY2001-FY2013;
+      'Pardons Granted (all types)' FY2014; 'Pardon Grants' FY2016-FY2024). Includes pardons granted both
+      with and without firearm-rights restoration. NULL FY2009 and FY2025 (the FY2025 report publishes
+      only the with/without-firearms split as separate figures, never a single total, and components are
+      not summed at transform time).
+    examples:
+    - 346
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Pardons Granted
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: rights_restorations
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Restorations of civil and political rights granted during the fiscal year ('Restoration
+      of Rights' FY2001-FY2014; 'Restoration of (Civil and Political )Rights Granted' FY2016-FY2024, wrapped
+      across two lines in some years). NULL FY2009 and FY2025 — the FY2025 report publishes only a with/without-firearms
+      split of restorations rather than a single total, and components are not summed at transform time.
+    examples:
+    - 133
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Rights Restorations
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: clemency_votes
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Individual clemency votes cast by the five Board members during the fiscal year (every
+      Board decision is a majority of individual member votes). Published FY2009-FY2014 and FY2019-FY2025;
+      NULL FY2001-FY2008 and FY2016-FY2018.
+    examples:
+    - 76261
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Clemency Votes
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: parole_population_start
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Offenders on parole under community supervision at the START of the fiscal year (July
+      1), as published in the DCS-era reports (FY2016-FY2025 only; supervision_era = 'dcs'). Each year's
+      July-1 figure equals the prior year's June-30 figure throughout FY2017-FY2025 (verified at transform
+      time). Not comparable to the pre-FY2016 parole_population_end series, which counts the Board-supervised
+      population on a different basis.
+    examples:
+    - 15105
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Parole Population Start
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'NULL for all fiscal years before 2016: the pre-HB310 reports never published a July-1 figure
+        on the same basis as their June-30 population table.'
+  - name: parole_population_end
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Offenders under parole-system supervision at the END of the fiscal year (June 30) —
+      a point-in-time stock, not a flow. TWO bases, flagged by supervision_era: FY2001-FY2014 (''board'')
+      is the ''TOTAL PAROLEE POPULATION'' from the releases-under-supervision table (Georgia releases
+      supervised in Georgia + out-of-state releases supervised in Georgia + Georgia releases supervised
+      out-of-state; components sum exactly to the total in every published year); FY2016-FY2025 (''dcs'')
+      is the population on parole under Department of Community Supervision community supervision, as
+      published in the reports'' narrative. Never chart as one continuous series across FY2015. NULL FY2009.'
+    examples:
+    - 14568
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Parole Population End
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL means the figure was not published in that fiscal year's annual report.
+  - name: parole_completion_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Successful parole completion rate — the share of parolees leaving supervision during
+      the fiscal year who completed parole successfully, per the Bureau of Justice Statistics methodology
+      the Board cites, scaled from the published whole-number percent to a 0-1 proportion (73% -> 0.73).
+      Published FY2005-FY2014 and FY2016-FY2025. A supervision-series metric: FY2016+ parolees are supervised
+      by DCS (supervision_era = ''dcs''), so treat the series as broken at FY2015. NULL FY2001-FY2004
+      (pre-BJS-formula years).'
+    examples:
+    - 0.73
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Parole Completion Rate
+    - property: short_description
+      value: Share of parolees leaving supervision who successfully completed parole (BJS methodology),
+        as a 0-1 proportion.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: 'NULL FY2001-FY2004: those reports quoted only an ''RDS successful outcome rate'' computed
+        on a different formula, which is not comparable and is not served.'
+  - name: total_expenditures
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Total agency expenditures for the fiscal year in nominal dollars, exactly as published
+      in the report''s agency-expenditures table (never recomputed from line items, never inflation-adjusted).
+      The series has a massive but REAL discontinuity at the HB310 break: through FY2016 the agency budget
+      included field supervision (~$45-56M); from FY2017 supervision costs belong to DCS and the Board''s
+      expenditures drop to ~$17-22M. Never compare across supervision_era. NULL FY2009, FY2012-FY2014.'
+    examples:
+    - 21634700.96
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Total Expenditures
+    - property: unit
+      value: currency
+    - property: null_meaning
+      value: 'NULL when the report published no agency-expenditures total: FY2009 (line items only), FY2012-FY2013
+        (fund-source budgets only), FY2014 (none).'
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: supervision_era_in_allowed_values
+    description: supervision_era is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE supervision_era IS NOT NULL AND supervision_era NOT IN
+      ('board', 'dcs')
+    mustBe: 0
+  - type: sql
+    name: total_releases_non_negative
+    description: total_releases is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE total_releases IS NOT NULL AND total_releases < 0
+    mustBe: 0
+  - type: sql
+    name: parole_releases_non_negative
+    description: parole_releases is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE parole_releases IS NOT NULL AND parole_releases < 0
+    mustBe: 0
+  - type: sql
+    name: parole_certificates_non_negative
+    description: parole_certificates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE parole_certificates IS NOT NULL AND parole_certificates
+      < 0
+    mustBe: 0
+  - type: sql
+    name: supervised_reprieves_non_negative
+    description: supervised_reprieves is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE supervised_reprieves IS NOT NULL AND supervised_reprieves
+      < 0
+    mustBe: 0
+  - type: sql
+    name: conditional_transfers_non_negative
+    description: conditional_transfers is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE conditional_transfers IS NOT NULL AND conditional_transfers
+      < 0
+    mustBe: 0
+  - type: sql
+    name: commutations_non_negative
+    description: commutations is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE commutations IS NOT NULL AND commutations < 0
+    mustBe: 0
+  - type: sql
+    name: guidelines_decisions_total_non_negative
+    description: guidelines_decisions_total is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE guidelines_decisions_total IS NOT NULL AND guidelines_decisions_total
+      < 0
+    mustBe: 0
+  - type: sql
+    name: guidelines_decisions_initial_non_negative
+    description: guidelines_decisions_initial is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE guidelines_decisions_initial IS NOT NULL AND guidelines_decisions_initial
+      < 0
+    mustBe: 0
+  - type: sql
+    name: life_cases_granted_non_negative
+    description: life_cases_granted is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE life_cases_granted IS NOT NULL AND life_cases_granted <
+      0
+    mustBe: 0
+  - type: sql
+    name: life_cases_denied_non_negative
+    description: life_cases_denied is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE life_cases_denied IS NOT NULL AND life_cases_denied < 0
+    mustBe: 0
+  - type: sql
+    name: life_decisions_total_non_negative
+    description: life_decisions_total is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE life_decisions_total IS NOT NULL AND life_decisions_total
+      < 0
+    mustBe: 0
+  - type: sql
+    name: parole_revocations_non_negative
+    description: parole_revocations is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE parole_revocations IS NOT NULL AND parole_revocations <
+      0
+    mustBe: 0
+  - type: sql
+    name: total_discharges_non_negative
+    description: total_discharges is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE total_discharges IS NOT NULL AND total_discharges < 0
+    mustBe: 0
+  - type: sql
+    name: pardons_granted_non_negative
+    description: pardons_granted is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pardons_granted IS NOT NULL AND pardons_granted < 0
+    mustBe: 0
+  - type: sql
+    name: rights_restorations_non_negative
+    description: rights_restorations is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE rights_restorations IS NOT NULL AND rights_restorations
+      < 0
+    mustBe: 0
+  - type: sql
+    name: clemency_votes_non_negative
+    description: clemency_votes is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE clemency_votes IS NOT NULL AND clemency_votes < 0
+    mustBe: 0
+  - type: sql
+    name: parole_population_start_non_negative
+    description: parole_population_start is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE parole_population_start IS NOT NULL AND parole_population_start
+      < 0
+    mustBe: 0
+  - type: sql
+    name: parole_population_end_non_negative
+    description: parole_population_end is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE parole_population_end IS NOT NULL AND parole_population_end
+      < 0
+    mustBe: 0
+  - type: sql
+    name: parole_completion_rate_within_unit_interval
+    description: parole_completion_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE parole_completion_rate IS NOT NULL AND (parole_completion_rate
+      < 0 OR parole_completion_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: year_floor_2000
+    description: Only fiscal years 2000 onward are served (the published series starts at FY2001).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year < 2000
+    mustBe: 0
+  - type: sql
+    name: fy2015_never_present
+    description: The agency never published an FY2015 report; the year must remain a gap, never interpolated.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year = 2015
+    mustBe: 0
+  - type: sql
+    name: supervision_era_matches_hb310_boundary
+    description: 'The HB310 era flag is a pure function of the fiscal year: ''board'' through FY2014,
+      ''dcs'' from FY2016.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (year <= 2014 AND supervision_era != 'board') OR (year
+      >= 2016 AND supervision_era != 'dcs')
+    mustBe: 0
+  - type: sql
+    name: key_metric_never_null
+    description: total_releases is published in every report year — a NULL would mean an extraction regression,
+      never real missingness.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE total_releases IS NULL
+    mustBe: 0
+  - type: sql
+    name: life_decision_components_sum
+    description: Life-sentence grants + denials must equal the published total in every year all three
+      are present.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE life_cases_granted IS NOT NULL AND life_cases_denied IS
+      NOT NULL AND life_decisions_total IS NOT NULL AND life_cases_granted + life_cases_denied != life_decisions_total
+    mustBe: 0
+  - type: sql
+    name: release_components_within_total
+    description: Served release-type components can never exceed the release-actions total they belong
+      to.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE total_releases IS NOT NULL AND COALESCE(parole_releases,
+      0) + COALESCE(parole_certificates, 0) + COALESCE(supervised_reprieves, 0) + COALESCE(conditional_transfers,
+      0) + COALESCE(commutations, 0) > total_releases
+    mustBe: 0
+  - type: sql
+    name: board_era_release_components_reconcile
+    description: FY2001-FY2013 release components (parole + supervised reprieve + conditional transfer
+      + commutation) reconcile to the published total within the tiny remission/other remainder (max observed
+      23, FY2011).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE year <= 2013 AND total_releases IS NOT NULL AND parole_releases
+      IS NOT NULL AND supervised_reprieves IS NOT NULL AND conditional_transfers IS NOT NULL AND commutations
+      IS NOT NULL AND total_releases - (parole_releases + supervised_reprieves + conditional_transfers
+      + commutations) NOT BETWEEN 0 AND 25
+    mustBe: 0
+  - type: sql
+    name: parole_releases_certificates_mutually_exclusive
+    description: The pre-FY2014 'Parole' line and the FY2014+ 'Parole Certificates' line never coexist
+      in one year — they are era-scoped generations of the release-type breakdown.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE parole_releases IS NOT NULL AND parole_certificates IS
+      NOT NULL
+    mustBe: 0
+  - type: sql
+    name: guidelines_initial_within_total
+    description: Initial guidelines decisions can never exceed total guidelines decisions in years publishing
+      both (initial + other = total is a published identity, e.g. FY2017 8,581 + 2,143 = 10,724).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE guidelines_decisions_initial IS NOT NULL AND guidelines_decisions_total
+      IS NOT NULL AND guidelines_decisions_initial > guidelines_decisions_total
+    mustBe: 0
+  - type: sql
+    name: population_start_dcs_era_only
+    description: The July-1 population start figure exists only in the DCS-era reports (FY2016+).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE parole_population_start IS NOT NULL AND supervision_era
+      != 'dcs'
+    mustBe: 0
+customProperties:
+- property: title
+  value: Parole Board Decisions and Clemency Actions
+- property: summary
+  value: Statewide fiscal-year totals of Georgia Parole Board decisions — prison releases by parole, guidelines
+    and life-sentence decisions, revocations, pardons, and parole outcomes — FY2001 onward.
+- property: source
+  value: Georgia State Board of Pardons and Paroles — Annual Reports, FY2001-FY2025 (PDF suite)
+- property: source_url
+  value: https://pap.georgia.gov/office-communications-news-publications-and-events/publications/annual-reports
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2001-2025
+- property: schema_hash
+  value: 6caab5ad63e796fe14882ea42cc517ca18e1671d41792ebce1d34591638a9713
+- property: available_years
+  value:
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value:
+  - 2015

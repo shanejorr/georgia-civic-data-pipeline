@@ -1,0 +1,131 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: _dimensions.demographics
+name: demographics
+version: 1.0.0
+status: active
+domain: shared
+tenant: georgia-public-data
+description:
+  purpose: Global demographics dimension shared across all domains. One row per canonical demographic
+    code with its label and category.
+  usage: Join from any fact table's demographic FK on demographic to attach demographic_label / demographic_category.
+  limitations: Within a category, demographic values are mutually exclusive; only the 'all' total overlaps
+    the category-specific rows. See the schema 'semantics' custom property for the full rules.
+tags:
+- shared
+- dimension
+- demographics
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/_dimensions/demographics.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/_dimensions/demographics.parquet
+  format: parquet
+schema:
+- name: demographics
+  logicalType: object
+  physicalType: parquet
+  physicalName: demographics
+  description: Demographics dimension table; single (non-partitioned) Parquet file. Shared globally across
+    domains.
+  dataGranularityDescription: One row per demographic code.
+  customProperties:
+  - property: entity_kind
+    value: dimension
+  - property: scope
+    value: global
+  - property: physical_basename
+    value: demographics
+  - property: semantics
+    value:
+      mutual_exclusivity: Within a demographic_category, the demographic values are mutually exclusive
+        (a student appears in exactly one per category).
+      denominator: The 'all' demographic is the unfiltered total and the denominator for share calculations.
+      combined_buckets: asian_pacific_islander is mutually exclusive with the split asian/pacific_islander
+        pair -- a topic publishes one or the other.
+      code_source: This dimension is data-driven and carries no enum of demographic codes; the canonical
+        code list is the UNION of the per-topic fact-table demographic enums, which remain the source
+        of truth for validating a fact's demographic values.
+  properties:
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Canonical demographic code (snake_case). Primary key; natural join key for every fact
+      table's demographic FK.
+    examples:
+    - black
+    customProperties:
+    - property: column_role
+      value: key
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: demographic_label
+    logicalType: string
+    physicalType: string
+    required: false
+    description: Human-readable demographic label.
+    examples:
+    - Black
+    customProperties:
+    - property: column_role
+      value: attribute
+  - name: demographic_category
+    logicalType: string
+    physicalType: string
+    required: false
+    description: Category the demographic belongs to (e.g. race, gender, economic, special_population,
+      grade, aggregate).
+    examples:
+    - race
+    enum:
+    - aggregate
+    - disability
+    - economic_status
+    - esol
+    - foster_care
+    - gender
+    - grade
+    - homeless_status
+    - migrant_status
+    - military
+    - race
+    - sped
+    customProperties:
+    - property: column_role
+      value: attribute
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dimension has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_category_in_allowed_values
+    description: demographic_category is one of the 12 canonical values.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic_category IS NOT NULL AND demographic_category
+      NOT IN ('aggregate', 'disability', 'economic_status', 'esol', 'foster_care', 'gender', 'grade',
+      'homeless_status', 'migrant_status', 'military', 'race', 'sped')
+    mustBe: 0
+  - type: sql
+    name: demographic_not_null
+    description: Primary-key column demographic is never NULL.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NULL
+    mustBe: 0
+  - type: sql
+    name: primary_key_unique
+    description: The primary key demographic is unique (no duplicate rows).
+    dimension: uniqueness
+    query: SELECT COUNT(*) FROM (SELECT demographic FROM {object} GROUP BY demographic HAVING COUNT(*)
+      > 1)
+    mustBe: 0
+customProperties:
+- property: schema_hash
+  value: 792a2044158b3ef194c0b824101c2be969ec22dad90c6e4bcc58b3e602ef0a6a

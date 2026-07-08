@@ -1,0 +1,399 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.postsecondary_c11
+name: postsecondary_c11
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Postsecondary enrollment outcomes (GOSA C11 report) for Georgia public high school graduating
+    cohorts: the number of high school graduates and the number of those graduates who enrolled in any
+    postsecondary institution (in-state or out-of-state, 2-year or 4-year, tracked roughly one year after
+    graduation), by demographic subgroup, for every Georgia public high school plus official district
+    and state rollups. Covers HS graduating cohorts 2010-2022 (published 2012-2024). No rates are published
+    — consumers derive the enrollment rate as num_enrolled_in_college / num_graduates.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: 'Suppressed cells are NULL (not zero): GOSA suppresses any metric cell below the n=10 reporting
+    threshold (TFS), which blanks ~51-53% of metric cells in every file — small subgroups (Migrant, Pacific
+    Islander, American Indian/Alaskan Native, LEP) are almost entirely suppressed at school level, and
+    summing only published subgroup counts undercounts true totals (use district or state rows for official
+    aggregates). Suppression is per metric cell, so num_enrolled_in_college can be NULL while num_graduates
+    is published. year is the HS graduating-cohort year, not the publication year (cohort + 2). The 2010
+    cohort has no pacific_islander rows and its race buckets undercount the total by ~1.1%. State rows
+    have NULL district_code and school_code; district rows have NULL school_code. The race axis uses the
+    split asian / pacific_islander convention — not comparable row-for-row with combined-convention topics
+    without aggregating these rows at query time.'
+tags:
+- education
+- gosa
+- postsecondary_c11
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/postsecondary_c11/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/postsecondary_c11/**/*.parquet
+  format: parquet
+schema:
+- name: postsecondary_c11
+  logicalType: object
+  physicalType: parquet
+  physicalName: postsecondary_c11
+  description: postsecondary_c11 fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+  - property: key_metric
+    value: num_enrolled_in_college
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/postsecondary_c11/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2022), schools detail
+      query: SELECT * FROM postsecondary_c11 WHERE year = 2022 LIMIT 100
+    - description: District 601 in 2022
+      query: SELECT * FROM postsecondary_c11 WHERE district_code = '601' AND year = 2022 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: High school graduating-cohort year (spring calendar year of graduation, e.g. 2022 for
+      the class of 2021-22) — NOT the publication year, which is consistently cohort + 2. Read from the
+      source's School Year / SCHOOL_YEAR column and cross-checked against the filename offset.
+    examples:
+    - 2022
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit state-charter codes. NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). NULL on district- and state-level rows.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Demographic subgroup (FK to the global demographics dimension). Race buckets use the
+      post-1997 OMB SPLIT convention — asian and pacific_islander are separate, mutually exclusive groups
+      (the seven race buckets sum to the 'all' total at the state level within a residue of at most 8
+      graduates in every year from 2011). The 2010 cohort (published 2012) has no pacific_islander rows
+      — the source did not publish the group that year — and its six race buckets undercount the total
+      by ~1.1% (race-reporting transition year). 'all' is the unfiltered total and overlaps every other
+      value; subgroups are mutually exclusive only within their own category (race, gender, economic,
+      special population).
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'migrant'
+    - 'multiracial'
+    - 'native_american'
+    - 'pacific_islander'
+    - 'students_with_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Student subgroup the row covers (race, gender, economic, or special-population); 'all' is
+        the cohort total. Race uses the split asian / pacific_islander convention.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_graduates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students in the demographic subgroup who graduated high school in the cohort
+      year. Published values are always >= 10 because GOSA suppresses smaller cells per metric (TFS);
+      ~51-53% of metric cells are suppressed in every file, concentrated in small subgroups (Migrant,
+      Pacific Islander, American Indian/Alaskan Native, LEP) at school level. If num_graduates is suppressed,
+      num_enrolled_in_college is always suppressed too (enrolled <= graduates).
+    examples:
+    - 162
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Graduates
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'Suppressed by GOSA (TFS = Too Few Students: the cell''s count is below the n=10 reporting
+        threshold).'
+  - name: num_enrolled_in_college
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Of the subgroup's high school graduates, the number who enrolled in any postsecondary
+      institution (in-state or out-of-state, 2-year or 4-year), tracked roughly one year after graduation.
+      Never exceeds num_graduates where both are published (enforced by a quality check). Named to match
+      the postsecondary_c12 sibling for cross-topic comparability. Published values are always >= 10 (GOSA's
+      per-cell suppression threshold).
+    examples:
+    - 100
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Enrolled in College
+    - property: short_description
+      value: Count of the cohort's graduates who enrolled in any US college within about a year; divide
+        by num_graduates for the college-going rate.
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'Suppressed by GOSA (TFS = Too Few Students: the cell''s count is below the n=10 reporting
+        threshold). Can be suppressed while num_graduates is published, because suppression is applied
+        per metric cell.'
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 14 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian', 'black', 'economically_disadvantaged', 'english_learners', 'female', 'hispanic', 'male',
+      'migrant', 'multiracial', 'native_american', 'pacific_islander', 'students_with_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: num_graduates_non_negative
+    description: num_graduates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_graduates IS NOT NULL AND num_graduates < 0
+    mustBe: 0
+  - type: sql
+    name: num_enrolled_in_college_non_negative
+    description: num_enrolled_in_college is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_enrolled_in_college IS NOT NULL AND num_enrolled_in_college
+      < 0
+    mustBe: 0
+  - type: sql
+    name: enrolled_never_exceeds_graduates
+    description: 'num_enrolled_in_college counts a subset of the row''s graduates, so it can never exceed
+      num_graduates where both are published (verified: zero violations across all 13 bronze files).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_graduates IS NOT NULL AND num_enrolled_in_college IS
+      NOT NULL AND num_enrolled_in_college > num_graduates
+    mustBe: 0
+  - type: sql
+    name: suppressed_graduates_implies_suppressed_enrolled
+    description: 'GOSA suppresses per metric cell at n=10; a suppressed num_graduates (< 10) forces the
+      enrolled count below 10 too, so no row may publish num_enrolled_in_college while num_graduates is
+      NULL (verified: zero such rows in any bronze file). The reverse is legal — enrolled can be suppressed
+      alone.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_graduates IS NULL AND num_enrolled_in_college IS NOT
+      NULL
+    mustBe: 0
+  - type: sql
+    name: published_counts_meet_reporting_threshold
+    description: Every published value is >= 10 — the publisher's own SQL (embedded in the 2014/2022 files)
+      suppresses any cell below 10 as TFS. A smaller value means a suppression regression or a column-swap
+      error.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (num_graduates IS NOT NULL AND num_graduates < 10) OR (num_enrolled_in_college
+      IS NOT NULL AND num_enrolled_in_college < 10)
+    mustBe: 0
+  - type: sql
+    name: state_rows_never_suppressed
+    description: 'GOSA publishes unsuppressed statewide aggregates for every subgroup in every year (verified
+      across all 13 files): state-level rows (district_code and school_code both NULL) must carry both
+      metrics.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL AND school_code IS NULL AND (num_graduates
+      IS NULL OR num_enrolled_in_college IS NULL)
+    mustBe: 0
+  - type: sql
+    name: state_gender_partition_sums_to_all
+    description: At the state level male + female sums exactly to the 'all' total for both metrics in
+      every cohort year (verified in bronze for all 13 years; state rows are never suppressed, so the
+      sums are NULL-safe).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, SUM(CASE WHEN demographic IN ('male', 'female') THEN num_graduates
+      ELSE 0 END) AS mf_grads, MAX(CASE WHEN demographic = 'all' THEN num_graduates END) AS all_grads,
+      SUM(CASE WHEN demographic IN ('male', 'female') THEN num_enrolled_in_college ELSE 0 END) AS mf_enrolled,
+      MAX(CASE WHEN demographic = 'all' THEN num_enrolled_in_college END) AS all_enrolled FROM {object}
+      WHERE district_code IS NULL AND school_code IS NULL GROUP BY year) AS by_year WHERE mf_grads <>
+      all_grads OR mf_enrolled <> all_enrolled
+    mustBe: 0
+  - type: sql
+    name: state_race_partition_sums_to_all_2011_onward
+    description: 'From 2011 the seven mutually exclusive race buckets (split Asian/PI convention, §5b)
+      partition each state-level total for both metrics within a residue of at most 8 (exact in 2011-2018,
+      2020, 2022; off by 8 in 2019 and 1 in 2021 — a handful of graduates without a reported race, preserved
+      as published). 2010 is excluded: its six buckets undercount by ~1.1%% (no Pacific Islander group;
+      race-reporting transition year).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, SUM(CASE WHEN demographic IN ('asian', 'black', 'hispanic',
+      'multiracial', 'native_american', 'pacific_islander', 'white') THEN num_graduates ELSE 0 END) AS
+      race_grads, MAX(CASE WHEN demographic = 'all' THEN num_graduates END) AS all_grads, SUM(CASE WHEN
+      demographic IN ('asian', 'black', 'hispanic', 'multiracial', 'native_american', 'pacific_islander',
+      'white') THEN num_enrolled_in_college ELSE 0 END) AS race_enrolled, MAX(CASE WHEN demographic =
+      'all' THEN num_enrolled_in_college END) AS all_enrolled FROM {object} WHERE district_code IS NULL
+      AND school_code IS NULL AND year >= 2011 GROUP BY year) AS by_year WHERE ABS(race_grads - all_grads)
+      > 8 OR ABS(race_enrolled - all_enrolled) > 8
+    mustBe: 0
+  - type: sql
+    name: pacific_islander_absent_in_2010
+    description: 'Structural fact: the 2012 file (cohort 2010) publishes 13 demographic groups with no
+      Pacific Islander; gold must carry no pacific_islander rows for 2010 (rows are absent, never fabricated
+      with NULL metrics).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE demographic = 'pacific_islander' AND year = 2010
+    mustBe: 0
+  - type: sql
+    name: pacific_islander_present_2011_onward
+    description: 'Structural fact: every cohort year from 2011 publishes the Pacific Islander group; a
+      year without pacific_islander rows means an unpivot or alias regression.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE year >= 2011 GROUP BY year HAVING SUM(CASE
+      WHEN demographic = 'pacific_islander' THEN 1 ELSE 0 END) = 0) AS bad_years
+    mustBe: 0
+customProperties:
+- property: title
+  value: Postsecondary Enrollment of HS Graduates (C11, Nationwide)
+- property: summary
+  value: How many Georgia public high school graduates enrolled in college anywhere in the US, by school,
+    district, and demographic subgroup, 2010-2022 cohorts.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2010-2022
+- property: schema_hash
+  value: fefe20f103fc68dec4568063837984ab90785e1fe39416526a59b20e4bc02d7e
+- property: available_years
+  value:
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+- property: year_gaps
+  value: []

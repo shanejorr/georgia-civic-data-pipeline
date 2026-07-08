@@ -1,0 +1,466 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.educator_qualifications_inexperienced_teachers_leaders
+name: educator_qualifications_inexperienced_teachers_leaders
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Office of Student Achievement (GOSA) Inexperienced Teachers and Leaders report. For
+    every Georgia public school, school district, and the state as a whole, reports the total educator
+    full-time equivalent (`total_fte`), the FTE of educators classified as Inexperienced — within the
+    first years of their career, per the ESSA inexperienced-educator standard — (`inexperienced_fte`),
+    and the inexperienced FTE as a percentage of total FTE (`inexperienced_fte_rate`, on a 0-1 decimal
+    scale). Unlike the sibling educator-qualifications topics (Teachers-only), this dataset reports both
+    Teachers and Leaders (`role`), and each entity carries rows across school-poverty strata (`poverty_subgroup`:
+    total, high_poverty, low_poverty, plus not_applicable and unknown for Leaders). Coverage spans the
+    2017-2018 school year through 2023-2024.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'Suppression is era-asymmetric: 2018-2020 publish a real `0` (true zero inexperienced educators,
+    723-765 rows per year), while 2021 onward suppress any value below 10 with `TFS` (treat NULL as ''value
+    < 10'' for 2021+ but as genuinely missing pre-2021); inexperienced_fte_rate may be non-null even when
+    inexperienced_fte is suppressed. The source publishes only district/school NAMES, so codes are resolved
+    by name against the education dimensions via the shared educator-topic resolver (year-aware certified_personnel
+    lookups, curated code pins, guarded matching); rows that cannot be resolved or faithfully attributed
+    are dropped only under documented predicates — unresolved truncated charter-container placeholders,
+    cataloged source gaps (e.g. Ivy Prep Kirkwood), and the ambiguous 52-char-truncated Genesis Innovation
+    Academy district aggregates (Boys/Girls distinguisher erased; bare school rows carry the real values)
+    — with per-year counts in the transform manifest. District-level coverage for Genesis Innovation Academy
+    is therefore missing in 2023-2024 while its school-level rows are complete. The 2024 truncated Utopian
+    Academy aggregates (one Leaders/Total identical-metric pair collapsed by dedup, plus a single Leaders/Low
+    Poverty row) are all bound to the pinned main campus 7820121 even though the truncated name also covers
+    the Trilith campus 7820619 — the Low Poverty row likely describes Trilith; preserved as published
+    and matching the v1-approved handling. Six 2018-2020 Leaders rows carry inexperienced_fte exceeding
+    total_fte by exactly 0.1 (independent 0.1-FTE rounding; preserved per data-cleaning-standards §4b).
+    Teachers `inexperienced_fte` does NOT aggregate across hierarchy levels: school-row sums exceed the
+    district row and district-row sums exceed the state row by ~1.4x in every year (consistent with experience
+    measured relative to the reporting unit); never derive aggregates by summing lower-level rows. The
+    2019 file''s Teachers FTE levels run ~40% above adjacent years statewide (162,256.2 vs 118,009.1 in
+    2018 / 110,800.8 in 2020) and the 2018 file''s school-level total_fte can sum above the district row
+    (149 of 205 districts) — treat 2018-2019 levels as a distinct measurement basis when trending. State
+    rows have NULL district_code and school_code; district rows have NULL school_code.'
+tags:
+- education
+- governor's office of student achievement
+- educator_qualifications_inexperienced_teachers_leaders
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/educator_qualifications_inexperienced_teachers_leaders/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/educator_qualifications_inexperienced_teachers_leaders/**/*.parquet
+  format: parquet
+schema:
+- name: educator_qualifications_inexperienced_teachers_leaders
+  logicalType: object
+  physicalType: parquet
+  physicalName: educator_qualifications_inexperienced_teachers_leaders
+  description: educator_qualifications_inexperienced_teachers_leaders fact table, year-partitioned Parquet
+    (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, role, poverty_subgroup (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - role
+    - poverty_subgroup
+  - property: key_metric
+    value: inexperienced_fte_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/educator_qualifications_inexperienced_teachers_leaders/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM educator_qualifications_inexperienced_teachers_leaders WHERE year = 2024 LIMIT
+        100
+    - description: District 601 in 2024
+      query: SELECT * FROM educator_qualifications_inexperienced_teachers_leaders WHERE district_code
+        = '601' AND year = 2024 LIMIT 100
+    - description: Filter by role = teachers
+      query: SELECT * FROM educator_qualifications_inexperienced_teachers_leaders WHERE role = 'teachers'
+        AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year. Year 2024 = 2023-2024 school year. Derived from
+      the bronze `LONG_SCHOOL_YEAR` column's ending year.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit charter code
+      for charter / specialty-school districts; NULL for state-level aggregate rows. FK to the education
+      districts dimension. Because the source publishes only district NAMES (no codes), codes are resolved
+      against `data/gold/education/_dimensions/districts.parquet` via the shared educator-topic resolver
+      (year-aware certified_personnel lookups, curated code pins, and guarded name matching — see src/etl/education/gosa/_educator_lookups.py).
+      Rows whose names cannot be resolved or faithfully attributed are dropped only under documented predicates;
+      the transform manifest records each dropped class and count per year.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded); NULL for district-level and state-level aggregate
+      rows. FK to the education schools dimension (composite key with district_code). Resolved by name
+      via the shared educator-topic resolver; school-level rows whose name cannot be resolved to a dimension
+      entry are dropped under documented source-gap predicates only (counts in the transform manifest).
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: role
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Workforce role the row measures: `teachers` or `leaders` (principals / assistant principals).
+      Unlike the sibling emergency / out-of-field educator-qualifications topics (Teachers-only), this
+      dataset reports both roles.'
+    examples:
+    - 'teachers'
+    enum:
+    - 'leaders'
+    - 'teachers'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Role
+    - property: short_description
+      value: 'Workforce role the row measures: teachers or leaders (principals and assistant principals).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: poverty_subgroup
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Poverty stratum of the schools whose FTE this row aggregates. `total` covers all schools
+      in the entity; `high_poverty` / `low_poverty` cover only the entity's schools in the state's highest-
+      / lowest-poverty quartile (per GOSA's K-12 Teacher & Leader Workforce Reports, school poverty is
+      defined by the direct-certification rate). Leaders rows additionally carry `not_applicable` (the
+      dominant Leaders stratum) and `unknown` (rare — chiefly Department of Juvenile Justice facilities,
+      plus isolated Mitchell County 2022 and Gwinnett County 2024 rows); Teachers rows never carry either
+      (enforced by a quality check). For a school-level row the stratum describes the school itself, so
+      a stratum row duplicates that school's `total` row (enforced by a quality check). This is a SCHOOL-poverty
+      stratum, NOT a student demographic — it does not map to the global demographics dimension.
+    examples:
+    - 'total'
+    enum:
+    - 'high_poverty'
+    - 'low_poverty'
+    - 'not_applicable'
+    - 'total'
+    - 'unknown'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Poverty Subgroup
+    - property: short_description
+      value: School-poverty stratum the row covers (total, high, or low poverty; Leaders add not_applicable/unknown);
+        a school-poverty level, not a student demographic.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'total'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: total_fte
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Total educator full-time equivalent count in the entity for the given role and poverty
+      subgroup. For `poverty_subgroup = total` this is the entity's total role FTE; for other strata it
+      is the FTE in just that stratum of schools. Fractional FTEs are real (e.g. 58.2). NULL when suppressed
+      by the GOSA reporting floor (`TFS`, < 10 FTE) — 2021 onward. Denominator of `inexperienced_fte_rate`.
+    examples:
+    - 65.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Total FTE
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by the GOSA reporting floor (`TFS`, fewer than 10 FTE); suppression exists from
+        the 2021 file onward. Pre-2021 files have no suppression.
+    - property: metric_component
+      value: denominator
+  - name: inexperienced_fte
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Educator FTE classified as Inexperienced (within the first years of their career, per
+      the ESSA inexperienced-educator standard) in the entity for the given role and poverty subgroup.
+      NULL when suppressed (`TFS`, < 10 FTE) — observed from 2021 onward. True zeros (no inexperienced
+      educators) are preserved as 0.0 in 2018-2020, before GOSA introduced suppression for this report.
+      Numerator of `inexperienced_fte_rate`. WARNING — not additive across hierarchy levels for Teachers:
+      school-row sums exceed the district row and district-row sums exceed the state row by ~1.4x in every
+      year (bronze-native; consistent with experience measured relative to the reporting unit — new-to-school
+      vs new-to-district vs new-to-profession). Never derive an aggregate by summing lower-level rows;
+      use the published row for the level you need. Leaders rows and `total_fte` DO reconcile across levels
+      (~1.000). Six 2018-2020 Leaders rows at tiny programs exceed `total_fte` by exactly 0.1 (e.g. 2.0
+      vs 1.9 at Randolph Clay High School 2018) — an artifact of GOSA rounding each FTE to 0.1 independently;
+      preserved per data-cleaning-standards §4b (extreme-but-conceivable).'
+    examples:
+    - 33.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Inexperienced FTE
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed (`TFS`, < 10 FTE) — 2021 onward. Pre-2021 files have no suppression, so NULL does
+        not occur and 0.0 is a true zero.
+    - property: metric_component
+      value: numerator
+  - name: inexperienced_fte_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: '`inexperienced_fte` / `total_fte` on a 0-1 decimal scale. Bronze publishes an integer
+      0-100 percent (verified range 0-100 across all years); divided by 100 per data-cleaning-standards
+      §4. GOSA computes the integer percent from UNROUNDED FTE values while publishing FTEs rounded to
+      0.1, so at small programs the published rate deviates from inexperienced_fte/total_fte (up to 0.9
+      below 10 FTE, e.g. published 0.1/0.1 with rate 0.10; at or above the 10-FTE reporting floor the
+      worst observed deviation is 0.09). A quality check enforces reconciliation within 0.10 where total_fte
+      >= 10. The rate is preserved from bronze even when `inexperienced_fte` is suppressed.'
+    examples:
+    - 0.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Inexperienced FTE Rate
+    - property: short_description
+      value: Share of educator FTE classified as inexperienced, on a 0-1 scale (inexperienced_fte / total_fte).
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: The bronze percentage itself was suppressed (`TFS`). The rate can be non-NULL while `inexperienced_fte`
+        is suppressed, and vice versa — GOSA suppresses each cell independently.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: role_in_allowed_values
+    description: role is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE role IS NOT NULL AND role NOT IN ('leaders', 'teachers')
+    mustBe: 0
+  - type: sql
+    name: poverty_subgroup_in_allowed_values
+    description: poverty_subgroup is one of the 5 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE poverty_subgroup IS NOT NULL AND poverty_subgroup NOT IN
+      ('high_poverty', 'low_poverty', 'not_applicable', 'total', 'unknown')
+    mustBe: 0
+  - type: sql
+    name: total_fte_non_negative
+    description: total_fte is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE total_fte IS NOT NULL AND total_fte < 0
+    mustBe: 0
+  - type: sql
+    name: inexperienced_fte_non_negative
+    description: inexperienced_fte is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE inexperienced_fte IS NOT NULL AND inexperienced_fte < 0
+    mustBe: 0
+  - type: sql
+    name: inexperienced_fte_rate_within_unit_interval
+    description: inexperienced_fte_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE inexperienced_fte_rate IS NOT NULL AND (inexperienced_fte_rate
+      < 0 OR inexperienced_fte_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: inexperienced_fte_within_total_fte
+    description: The inexperienced FTE count never exceeds the total FTE it is drawn from, beyond GOSA's
+      independent 0.1-FTE rounding. Six bronze rows (2018-2020 Leaders at tiny programs) exceed by exactly
+      0.1; the 0.15 tolerance covers that rounding artifact while still catching any real numerator/denominator
+      inversion.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE inexperienced_fte IS NOT NULL AND total_fte IS NOT NULL
+      AND inexperienced_fte > total_fte + 0.15
+    mustBe: 0
+  - type: sql
+    name: inexperienced_fte_rate_reconciles_with_components
+    description: inexperienced_fte_rate reconciles with inexperienced_fte / total_fte within 0.10 on the
+      0-1 scale, scoped to total_fte >= 10 (the GOSA reporting floor). GOSA computes the integer percent
+      from unrounded FTE values while publishing FTEs rounded to 0.1, so below 10 FTE the published components
+      are too coarse for reconciliation (observed deviation up to 0.9 at 0.1-FTE programs); at or above
+      the floor the worst observed deviation is 0.09.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE total_fte IS NOT NULL AND total_fte >= 10 AND inexperienced_fte
+      IS NOT NULL AND inexperienced_fte_rate IS NOT NULL AND ABS(inexperienced_fte / total_fte - inexperienced_fte_rate)
+      > 0.10
+    mustBe: 0
+  - type: sql
+    name: school_poverty_stratum_mirrors_total
+    description: A school-level stratum row (high_poverty, low_poverty, not_applicable, or unknown) duplicates
+      the same school's total row for the same role — a school IS its poverty stratum; the stratum rows
+      are republications, not sub-populations. Checked on both FTE metrics with a 0.001 float tolerance;
+      verified exact in bronze for every year on all three metrics.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, role, MAX(CASE WHEN poverty_subgroup
+      = 'total' THEN total_fte END) AS t_tot, MAX(CASE WHEN poverty_subgroup <> 'total' THEN total_fte
+      END) AS s_tot, MAX(CASE WHEN poverty_subgroup = 'total' THEN inexperienced_fte END) AS t_inx, MAX(CASE
+      WHEN poverty_subgroup <> 'total' THEN inexperienced_fte END) AS s_inx FROM {object} WHERE school_code
+      IS NOT NULL GROUP BY year, district_code, school_code, role) WHERE (t_tot IS NOT NULL AND s_tot
+      IS NOT NULL AND ABS(s_tot - t_tot) > 0.001) OR (t_inx IS NOT NULL AND s_inx IS NOT NULL AND ABS(s_inx
+      - t_inx) > 0.001)
+    mustBe: 0
+  - type: sql
+    name: school_role_single_poverty_stratum
+    description: 'The poverty strata are disjoint, so a school carries at most ONE non-total stratum row
+      per role per year (its own stratum). Verified across all bronze years: no school-role group ever
+      carries two distinct non-total strata.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, role FROM {object} WHERE school_code
+      IS NOT NULL AND poverty_subgroup <> 'total' GROUP BY year, district_code, school_code, role HAVING
+      COUNT(DISTINCT poverty_subgroup) > 1) AS bad
+    mustBe: 0
+  - type: sql
+    name: teachers_never_not_applicable_or_unknown
+    description: 'Structural fact: the not_applicable and unknown poverty strata exist only for the Leaders
+      workforce — zero Teachers rows carry them in any bronze year.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE role = 'teachers' AND poverty_subgroup IN ('not_applicable',
+      'unknown')
+    mustBe: 0
+  - type: sql
+    name: aggregate_poverty_strata_within_total
+    description: 'At district and state level the high-poverty and low-poverty strata are disjoint subsets
+      of the entity''s role workforce, so high_poverty + low_poverty <= total + 0.55 when all three are
+      reported. The 0.55 tolerance covers GOSA''s 0.1-FTE rounding (observed worst excess: 0.5 at Greene
+      County Leaders 2020).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, role, MAX(CASE WHEN poverty_subgroup = 'total'
+      THEN total_fte END) AS t, MAX(CASE WHEN poverty_subgroup = 'high_poverty' THEN total_fte END) AS
+      hp, MAX(CASE WHEN poverty_subgroup = 'low_poverty' THEN total_fte END) AS lp FROM {object} WHERE
+      school_code IS NULL GROUP BY year, district_code, role) WHERE t IS NOT NULL AND hp IS NOT NULL AND
+      lp IS NOT NULL AND hp + lp > t + 0.55
+    mustBe: 0
+  - type: sql
+    name: state_rows_exactly_six_per_year
+    description: 'Structural fact: every year carries exactly six state-level rows (district_code IS NULL)
+      — 2 roles x 3 poverty strata (total, high_poverty, low_poverty; not_applicable/unknown never appear
+      at state level).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL GROUP BY year HAVING
+      COUNT(*) <> 6 OR COUNT(DISTINCT role || '/' || poverty_subgroup) <> 6 OR SUM(CASE WHEN poverty_subgroup
+      NOT IN ('total', 'high_poverty', 'low_poverty') THEN 1 ELSE 0 END) > 0) AS bad
+    mustBe: 0
+customProperties:
+- property: title
+  value: Inexperienced Teachers and Leaders
+- property: summary
+  value: Share of Georgia teachers and leaders in their first career years by school, district, role,
+    and poverty stratum, 2018-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2018-2024
+- property: schema_hash
+  value: 97f942f22b6bb4ed8c400d5006fa87998929f352b6c65529faec9cd00e51b4dc
+- property: available_years
+  value:
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

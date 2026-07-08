@@ -1,0 +1,318 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.free_reduced_lunch
+name: free_reduced_lunch
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Insights (GaDOE) Free and Reduced Price Meal Eligibility — the share of K-12 enrolled
+    students eligible for Free or Reduced-price Lunch (FRL) under the USDA National School Lunch Program,
+    for every Georgia public school, district/system, and the state, fiscal years 2013-2026. A widely
+    used proxy for student economic disadvantage. Eligibility is income-based per the USDA Federal Income
+    Eligibility Guidelines: free meals at or below 130% of the federal poverty level, reduced-price between
+    130% and 185%; the combined FRL rate counts students up to the 185% threshold. This is the broad income/application-based
+    eligibility measure — the automatic categorical-eligibility SUBSET (students certified without an
+    application via SNAP/TANF/foster/homeless/migrant/Medicaid) is the companion topic direct_certification.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: free_reduced_lunch_rate is NULL whenever the source did not publish a numeric rate; the
+    reporting_status column records WHY. Bronze `*` (reporting_status='suppressed_privacy_band') is a
+    dual-ended PRIVACY suppression — it means the rate was greater than 95% or less than 5%, so a suppressed
+    entity cannot be inferred to be at either the high or the low end. Consequently, every published (non-null)
+    rate falls within the [0.05, 0.95] band. Bronze `#` (and the rare `NA`, FY2016 only) (reporting_status='not_participating')
+    means the entity does not participate in the FRL program at all — under the Community Eligibility
+    Provision (CEP), many high-poverty schools show `#` because meals are universal rather than means-tested,
+    so a `#` does NOT imply low poverty. State rows come exclusively from the District CSV's `State-Wide
+    Total` row; School files carry no state aggregate. FY2025-FY2026 show substantially elevated `*` suppression
+    (expanded CEP coverage). This is the broad income-based FRL eligibility measure (free <=130% FPL,
+    reduced 130-185%); the automatic categorical subset is the companion direct_certification topic.
+tags:
+- education
+- georgia insights
+- free_reduced_lunch
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/free_reduced_lunch/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/free_reduced_lunch/**/*.parquet
+  format: parquet
+schema:
+- name: free_reduced_lunch
+  logicalType: object
+  physicalType: parquet
+  physicalName: free_reduced_lunch
+  description: free_reduced_lunch fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, reporting_status (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - reporting_status
+  - property: key_metric
+    value: free_reduced_lunch_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/free_reduced_lunch/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2026), schools detail
+      query: SELECT * FROM free_reduced_lunch WHERE year = 2026 LIMIT 100
+    - description: District 601 in 2026
+      query: SELECT * FROM free_reduced_lunch WHERE district_code = '601' AND year = 2026 LIMIT 100
+    - description: Filter by reporting_status = reported
+      query: SELECT * FROM free_reduced_lunch WHERE reporting_status = 'reported' AND year = 2026 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Georgia fiscal year = ending calendar year of the school year (2024 = the 2023-2024 school
+      year; Georgia FY ends June 30). Sourced from the bronze filename, cross-checked against each file's
+      preamble.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GaDOE district/system code (FK to districts dimension). Standard county/city systems
+      are 3-digit zero-padded codes; state-specialty and charter systems use 7-digit codes. NULL for state-level
+      rows.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GaDOE school code, extracted from the bronze composite `School ID - School Name`
+      column (FK to schools dimension, composite with district_code — the same school_code can appear
+      in multiple districts). NULL for district- and state-level rows.
+    examples:
+    - '1050'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: reporting_status
+    logicalType: string
+    physicalType: string
+    required: false
+    description: Why `free_reduced_lunch_rate` is present or NULL. `reported` — bronze carried a numeric
+      rate; `suppressed_privacy_band` — bronze `*` (the true rate is greater than 95% or less than 5%,
+      hidden by the source; dual-ended, so a suppressed entity cannot be inferred to sit at either end);
+      `not_participating` — bronze `#` or `NA` (entity does not participate in the FRL program; under
+      the Community Eligibility Provision many high-poverty schools fall here because meals are universal
+      rather than means-tested, so it does NOT imply low poverty). Never NULL in FY2013-FY2026 bronze
+      (every rate cell carries a value or a marker — enforced by a quality check); a NULL would mean a
+      genuinely missing bronze cell.
+    examples:
+    - 'reported'
+    enum:
+    - 'not_participating'
+    - 'reported'
+    - 'suppressed_privacy_band'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Reporting Status
+    - property: short_description
+      value: 'Why the rate is present or NULL: reported, privacy-suppressed (rate >95% or <5%), or not
+        participating.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: free_reduced_lunch_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of K-12 enrolled students eligible for Free or Reduced-price Lunch (0-1 decimal
+      scale; bronze `KK-12 % FRL` divided by 100). NULL when the source suppressed the rate (`*`) or the
+      entity does not participate (`#`/`NA`) — see `reporting_status` for which. Every published rate
+      lies within the source's [0.05, 0.95] publication band.
+    examples:
+    - 0.6889
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Free Reduced Lunch Rate
+    - property: short_description
+      value: Share of K-12 students eligible for free/reduced-price lunch on a 0-1 scale; NULL means suppressed
+        or not participating (see reporting_status).
+    - property: unit
+      value: proportion
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: reporting_status_in_allowed_values
+    description: reporting_status is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status IS NOT NULL AND reporting_status NOT IN
+      ('not_participating', 'reported', 'suppressed_privacy_band')
+    mustBe: 0
+  - type: sql
+    name: free_reduced_lunch_rate_within_unit_interval
+    description: free_reduced_lunch_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE free_reduced_lunch_rate IS NOT NULL AND (free_reduced_lunch_rate
+      < 0 OR free_reduced_lunch_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: reported_status_has_rate
+    description: Rows marked reporting_status='reported' must carry a non-null free_reduced_lunch_rate.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'reported' AND free_reduced_lunch_rate
+      IS NULL
+    mustBe: 0
+  - type: sql
+    name: suppressed_privacy_band_has_null_rate
+    description: Rows marked reporting_status='suppressed_privacy_band' must have a NULL free_reduced_lunch_rate
+      (the source hid the rate).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'suppressed_privacy_band' AND free_reduced_lunch_rate
+      IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: not_participating_has_null_rate
+    description: Rows marked reporting_status='not_participating' must have a NULL free_reduced_lunch_rate
+      (entity is not in the FRL program).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'not_participating' AND free_reduced_lunch_rate
+      IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: reporting_status_never_null
+    description: 'reporting_status is never NULL: every bronze rate cell in FY2013-FY2026 carries a numeric
+      value or one of the `*`/`#`/`NA` markers (verified cell-by-cell across all 28 files). A NULL would
+      mean a genuinely missing bronze cell — a new source behavior worth investigating.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status IS NULL
+    mustBe: 0
+  - type: sql
+    name: free_reduced_lunch_rate_within_publication_band
+    description: 'Every published (non-null) rate falls within the source publication band [0.05, 0.95];
+      values outside the band are privacy-suppressed to NULL (verified: bronze global min 5.0, max 95.0).
+      A small float tolerance absorbs the /100 rescale representation of 0.95.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE free_reduced_lunch_rate IS NOT NULL AND (free_reduced_lunch_rate
+      < 0.05 - 1e-6 OR free_reduced_lunch_rate > 0.95 + 1e-6)
+    mustBe: 0
+  - type: sql
+    name: one_state_row_per_year
+    description: Every year publishes exactly one state-level row — each District bronze file carries
+      exactly one State-Wide Total row, and School files carry none (verified for all 14 years).
+    dimension: completeness
+    query: SELECT (SELECT COUNT(DISTINCT year) FROM {object}) - (SELECT COUNT(*) FROM (SELECT year FROM
+      {object} WHERE district_code IS NULL AND school_code IS NULL GROUP BY year HAVING COUNT(*) = 1)
+      t)
+    mustBe: 0
+customProperties:
+- property: title
+  value: Free and Reduced-Price Lunch Eligibility
+- property: summary
+  value: Share of K-12 students eligible for free or reduced-price lunch, a proxy for economic disadvantage,
+    per school, district, and state, 2013-2026.
+- property: source
+  value: Georgia Insights (GaDOE) — Free and Reduced Price Meal Eligibility
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2013-2026
+- property: schema_hash
+  value: 3a1e4394f33288dc91c72a06d9977bce94215412ce53a5277dab6094a4047f42
+- property: available_years
+  value:
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+- property: year_gaps
+  value: []

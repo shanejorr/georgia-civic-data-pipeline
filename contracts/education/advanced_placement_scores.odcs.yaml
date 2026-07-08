@@ -1,0 +1,470 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.advanced_placement_scores
+name: advanced_placement_scores
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Advanced Placement (AP) exam participation and qualifying-score counts for Georgia public high
+    schools, with official district and state rollups, published by GOSA for 2004-2024. Each row reports
+    the number of distinct students taking AP exams, the total exams administered, the count of exams
+    scoring 3 or higher (College Board's qualifying threshold), and a derived pass rate (tests_3_or_higher_rate).
+    Years 2011-2024 break the counts down by AP subject in addition to a cross-subject all_subjects total;
+    years 2004-2010 publish only the cross-subject total.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- governor's office of student achievement
+- advanced_placement_scores
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/advanced_placement_scores/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/advanced_placement_scores/**/*.parquet
+  format: parquet
+schema:
+- name: advanced_placement_scores
+  logicalType: object
+  physicalType: parquet
+  physicalName: advanced_placement_scores
+  description: advanced_placement_scores fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code, subject (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - subject
+  - property: key_metric
+    value: tests_3_or_higher_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/advanced_placement_scores/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM advanced_placement_scores WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM advanced_placement_scores WHERE district_code = '601' AND year = 2024 LIMIT
+        100
+    - description: Filter by subject = calculus_a
+      query: SELECT * FROM advanced_placement_scores WHERE subject = 'calculus_a' AND year = 2024 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (2024 = the 2023-24 school year). 2011-2024 sources
+      carry a LONG_SCHOOL_YEAR column whose ending year is cross-checked against the filename; 2004-2010
+      sources have no year column and the filename year is used.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit charter codes. NULL on state-level rows. Bronze aggregate sentinels (ALL / DISTRICT_ALL)
+      map to NULL.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). NULL on district- and state-level rows. Bronze aggregate
+      sentinels (ALL / SCHOOL_ALL / DISTRICT_ALL) map to NULL.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: subject
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'AP subject (snake_case recode of the source''s TEST_CMPNT_TYP_NM). all_subjects is the
+      cross-subject aggregate: the only value present for 2004-2010 (the legacy sources have no per-subject
+      breakdown) and one row per entity alongside the per-subject rows for 2011-2024. all_subjects rows
+      are NOT the sum of the subject rows — num_tested counts distinct students across subjects there.
+      calculus_a is GOSA''s literal label for AP Calculus AB (it pairs with calculus_bc), not a normalization
+      error; physics_b and latin_vergil are discontinued legacy AP exams retained for the years they were
+      administered.'
+    examples:
+    - 'calculus_a'
+    enum:
+    - 'african_american_studies'
+    - 'all_subjects'
+    - 'art_history'
+    - 'art_studio_2d_design'
+    - 'art_studio_3d_design'
+    - 'art_studio_drawing'
+    - 'biology'
+    - 'calculus_a'
+    - 'calculus_bc'
+    - 'capstone'
+    - 'capstone_research'
+    - 'chemistry'
+    - 'chinese_language_and_culture'
+    - 'computer_science_a'
+    - 'computer_science_principles'
+    - 'economics_macro'
+    - 'economics_micro'
+    - 'english_language_and_composition'
+    - 'english_literature_and_composition'
+    - 'environmental_science'
+    - 'european_history'
+    - 'french_language'
+    - 'german_language'
+    - 'government_and_politics_comparative'
+    - 'government_and_politics_us'
+    - 'human_geography'
+    - 'italian_language_and_culture'
+    - 'japanese_language_and_culture'
+    - 'latin_vergil'
+    - 'music_theory'
+    - 'physics_1'
+    - 'physics_2'
+    - 'physics_b'
+    - 'physics_c_electricity_and_magnetism'
+    - 'physics_c_mechanics'
+    - 'precalculus'
+    - 'psychology'
+    - 'spanish_language'
+    - 'spanish_literature'
+    - 'statistics'
+    - 'us_history'
+    - 'world_history'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Subject
+    - property: short_description
+      value: Which AP exam subject the row covers; all_subjects is the cross-subject total (distinct students,
+        not a sum of the per-subject rows).
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all_subjects'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_tested
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Number of distinct students who sat at least one AP exam (all_subjects rows) or who
+      sat the specific subject''s exam (per-subject rows). Summing per-subject num_tested double-counts
+      students who took multiple subjects; summing school rows can likewise slightly exceed the published
+      district/state rollups (median gap 2) because the rollup counts each student once even when school-level
+      attribution counts a mid-year mover at more than one school. Three source rows publish num_tested
+      greater than num_tests_taken — impossible if both counts were accurate, but the wrong-side column
+      is unknowable, so the published values are preserved and documented: 2005 district 611 school 0204
+      (Rutland HS, 33 students / 23 tests) and 2008 district 652 (Elbert County, 10/9, appearing on both
+      the school 0176 row and the single-school district row).'
+    examples:
+    - 17
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS / Too Few Students marker, or a blank cell in 2004-2007 and 2011-2022
+        sources), or one of the 8 masked 2005 district rollup rows (misassigned at source — see notes).
+  - name: num_tests_taken
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Total AP exams administered (a student can take exams in multiple subjects, and the College
+      Board counts each exam). 47 of 414 bronze rows in 2004 leave this blank; 2011-2019 sources suppress
+      via empty cells, 2020-2024 via TFS.
+    examples:
+    - 17
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tests Taken
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS / Too Few Students marker, or a blank cell — the dominant suppression
+        form in 2004-2007 and 2011-2019 sources), or one of the 8 masked 2005 district rollup rows (misassigned
+        at source — see notes).
+    - property: metric_component
+      value: denominator
+  - name: num_tests_3_or_higher
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of AP exams that scored 3 or higher (College Board's qualifying threshold; scores
+      run 1-5). Never exceeds num_tests_taken where both are reported (enforced by a quality check).
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tests 3 or Higher
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (TFS / Too Few Students marker, or a blank/empty cell), or one of the
+        8 masked 2005 district rollup rows (misassigned at source — see notes). Suppressed independently
+        of the other two counts and roughly twice as often in 2023-2024.
+    - property: metric_component
+      value: numerator
+  - name: tests_3_or_higher_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of administered exams that scored 3 or higher, derived by the transform as num_tests_3_or_higher
+      / num_tests_taken on the 0-1 scale (the pct_* share-of-denominator companion to num_tests_3_or_higher).
+      2004-2010 sources publish a 0-100 percentage column that is dropped and recomputed (recomputed values
+      agree within 0.0005 — source rounding); 2011-2024 sources publish no rate column. NULL when either
+      count is suppressed or the denominator is 0.
+    examples:
+    - 0.706
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Tests 3 or Higher Rate
+    - property: short_description
+      value: Share of AP exams that scored 3 or higher (College Board's qualifying threshold), on a 0-1
+        scale; higher is better.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: 'Not derivable: num_tests_taken or num_tests_3_or_higher is suppressed (or masked on the
+        8 misassigned 2005 district rollup rows), or num_tests_taken is 0.'
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: subject_in_allowed_values
+    description: subject is one of the 42 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE subject IS NOT NULL AND subject NOT IN ('african_american_studies',
+      'all_subjects', 'art_history', 'art_studio_2d_design', 'art_studio_3d_design', 'art_studio_drawing',
+      'biology', 'calculus_a', 'calculus_bc', 'capstone', 'capstone_research', 'chemistry', 'chinese_language_and_culture',
+      'computer_science_a', 'computer_science_principles', 'economics_macro', 'economics_micro', 'english_language_and_composition',
+      'english_literature_and_composition', 'environmental_science', 'european_history', 'french_language',
+      'german_language', 'government_and_politics_comparative', 'government_and_politics_us', 'human_geography',
+      'italian_language_and_culture', 'japanese_language_and_culture', 'latin_vergil', 'music_theory',
+      'physics_1', 'physics_2', 'physics_b', 'physics_c_electricity_and_magnetism', 'physics_c_mechanics',
+      'precalculus', 'psychology', 'spanish_language', 'spanish_literature', 'statistics', 'us_history',
+      'world_history')
+    mustBe: 0
+  - type: sql
+    name: num_tested_non_negative
+    description: num_tested is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested < 0
+    mustBe: 0
+  - type: sql
+    name: num_tests_taken_non_negative
+    description: num_tests_taken is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tests_taken IS NOT NULL AND num_tests_taken < 0
+    mustBe: 0
+  - type: sql
+    name: num_tests_3_or_higher_non_negative
+    description: num_tests_3_or_higher is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tests_3_or_higher IS NOT NULL AND num_tests_3_or_higher
+      < 0
+    mustBe: 0
+  - type: sql
+    name: tests_3_or_higher_rate_within_unit_interval
+    description: tests_3_or_higher_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE tests_3_or_higher_rate IS NOT NULL AND (tests_3_or_higher_rate
+      < 0 OR tests_3_or_higher_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: tests_3_or_higher_within_tests_taken
+    description: 'Qualifying exams are a subset of administered exams: where both counts are reported,
+      num_tests_3_or_higher cannot exceed num_tests_taken. Holds with zero violations in every bronze
+      year 2004-2024.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_tests_3_or_higher IS NOT NULL AND num_tests_taken IS
+      NOT NULL AND num_tests_3_or_higher > num_tests_taken
+    mustBe: 0
+  - type: sql
+    name: num_tested_within_num_tests_taken
+    description: 'Every tested student sits at least one exam, so num_tested cannot exceed num_tests_taken
+      where both are reported — except the three pinned source defects preserved per data-cleaning-standards
+      section 4b: 2005 district 611 school 0204 (33/23) and 2008 district 652 (10/9, on the school 0176
+      row and the district row). Any other violation is a new defect and fails.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tests_taken IS NOT NULL
+      AND num_tested > num_tests_taken AND NOT (year = 2005 AND district_code = '611' AND school_code
+      = '0204') AND NOT (year = 2008 AND district_code = '652' AND (school_code = '0176' OR school_code
+      IS NULL))
+    mustBe: 0
+  - type: sql
+    name: tests_3_or_higher_rate_matches_counts
+    description: tests_3_or_higher_rate is derived by the transform as num_tests_3_or_higher / num_tests_taken;
+      wherever the inputs are present with a positive denominator the stored value must equal the recomputed
+      ratio.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE tests_3_or_higher_rate IS NOT NULL AND num_tests_taken
+      IS NOT NULL AND num_tests_taken > 0 AND num_tests_3_or_higher IS NOT NULL AND ABS(tests_3_or_higher_rate
+      - (CAST(num_tests_3_or_higher AS DOUBLE) / num_tests_taken)) > 1e-9
+    mustBe: 0
+  - type: sql
+    name: tests_3_or_higher_rate_co_null_with_inputs
+    description: 'Co-null contract of the derived rate: tests_3_or_higher_rate is non-NULL if and only
+      if num_tests_taken is reported and positive and num_tests_3_or_higher is reported.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE (tests_3_or_higher_rate IS NOT NULL AND (num_tests_taken
+      IS NULL OR num_tests_taken = 0 OR num_tests_3_or_higher IS NULL)) OR (tests_3_or_higher_rate IS
+      NULL AND num_tests_taken IS NOT NULL AND num_tests_taken > 0 AND num_tests_3_or_higher IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: district_not_below_own_max_school
+    description: 'A district rollup can never be smaller than its own largest school row for the same
+      year and subject (a school''s students/tests are a subset of its district''s). Pins the 2005 misassigned-rollup
+      defect class: pre-mask the only violators were the defective 2005 rows (districts 681, 722); post-mask
+      zero. Written as one conditional-aggregation scan per data-cleaning-standards section 15b (never
+      a self-join).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, subject, MAX(CASE WHEN school_code IS NULL
+      THEN num_tested END) AS d_nt, MAX(CASE WHEN school_code IS NOT NULL THEN num_tested END) AS s_nt,
+      MAX(CASE WHEN school_code IS NULL THEN num_tests_taken END) AS d_tt, MAX(CASE WHEN school_code IS
+      NOT NULL THEN num_tests_taken END) AS s_tt, MAX(CASE WHEN school_code IS NULL THEN num_tests_3_or_higher
+      END) AS d_t3, MAX(CASE WHEN school_code IS NOT NULL THEN num_tests_3_or_higher END) AS s_t3 FROM
+      {object} WHERE district_code IS NOT NULL GROUP BY year, district_code, subject) WHERE (d_nt IS NOT
+      NULL AND s_nt IS NOT NULL AND d_nt < s_nt) OR (d_tt IS NOT NULL AND s_tt IS NOT NULL AND d_tt <
+      s_tt) OR (d_t3 IS NOT NULL AND s_t3 IS NOT NULL AND d_t3 < s_t3)
+    mustBe: 0
+  - type: sql
+    name: legacy_years_all_subjects_only
+    description: 2004-2010 sources have no per-subject breakdown — every row in those years must carry
+      subject = 'all_subjects'.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year <= 2010 AND subject != 'all_subjects'
+    mustBe: 0
+customProperties:
+- property: title
+  value: Advanced Placement (AP) Exam Scores
+- property: summary
+  value: AP college-level exam participation and pass rates (share scoring 3 or higher) by Georgia school,
+    district, and AP subject, 2004-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2004-2024
+- property: schema_hash
+  value: 99b14eb4841245881a8b45f0ee2c661900216655a6bb25f5c72e79a90e7563f3
+- property: available_years
+  value:
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

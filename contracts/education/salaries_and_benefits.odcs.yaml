@@ -1,0 +1,431 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.salaries_and_benefits
+name: salaries_and_benefits
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Salary and benefit expenditures for Georgia public school districts (with RESA service-agency
+    aggregates and the official state rollup) by staff category — teachers and paraprofessionals, school
+    administration, and general administration — plus those salary+benefit totals as a share of four district
+    revenue and expenditure bases. Published by GOSA for school years 2010-11 through 2023-24.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'State rows have NULL district_code. school_code is always NULL — this is a district-only
+    topic (no school-level detail exists at the source). District-detail rows include the 16 Regional
+    Education Service Agencies (district codes 850-888), which are service-agency aggregates rather than
+    school districts — exclude district_code between ''850'' and ''888'' when analyzing traditional LEAs,
+    and do not sum district rows to reproduce the state rollup without accounting for them. The four pct_*
+    columns are decimal ratios that legitimately exceed 1.0 in 2021 (school year 2020-21): category spending
+    exceeded the chosen bases that year, up to 1.2731 — the 2021 file runs ~2x adjacent years across all
+    metrics (dollars included), consistent with a two-year-cumulative publication. No suppression exists
+    in this topic — NULL never means suppressed.'
+tags:
+- education
+- gosa
+- salaries_and_benefits
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/salaries_and_benefits/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/salaries_and_benefits/**/*.parquet
+  format: parquet
+schema:
+- name: salaries_and_benefits
+  logicalType: object
+  physicalType: parquet
+  physicalName: salaries_and_benefits
+  description: salaries_and_benefits fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code, staff_category (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - districts
+    - states
+  - property: default_detail
+    value: districts
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - staff_category
+  - property: key_metric
+    value: salaries_and_benefits
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/salaries_and_benefits/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), districts detail
+      query: SELECT * FROM salaries_and_benefits WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM salaries_and_benefits WHERE district_code = '601' AND year = 2024 LIMIT 100
+    - description: Filter by staff_category = teachers_and_paraprofessionals
+      query: SELECT * FROM salaries_and_benefits WHERE staff_category = 'teachers_and_paraprofessionals'
+        AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending (spring) calendar year of the school year (e.g. 2024 for 2023-24), parsed from
+      the source's LONG_SCHOOL_YEAR and cross-checked against the filename.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit state-charter codes. Codes 850-888 are the 16 Regional Education Service Agencies (RESAs)
+      — service-agency aggregates kept at district detail (the dimension types them ''resa''); exclude
+      them when analyzing traditional LEAs. NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code (composite FK to schools dimension with district_code). Always NULL
+      in this district-only topic — the source reports no school-level detail (enforced by a quality check).
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    - property: null_meaning
+      value: Always NULL — this topic publishes no school-level rows; the column exists so every education
+        fact table shares the same key shape.
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: staff_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Staff category the row''s salary and benefit dollars cover: teachers_and_paraprofessionals,
+      school_administration (principals and school-level administrators), or general_administration (district-office
+      administration). Every entity carries exactly one row per category per year.'
+    examples:
+    - 'teachers_and_paraprofessionals'
+    enum:
+    - 'general_administration'
+    - 'school_administration'
+    - 'teachers_and_paraprofessionals'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Staff Category
+    - property: short_description
+      value: 'Which staff the dollars cover: teachers_and_paraprofessionals, school_administration, or
+        general_administration (one row per category).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: salaries
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Total salary dollars paid for the staff category. Rare small negatives are real refunds/restatements
+      published by the source and preserved (one 2024 row at -2,000.00); no range check applies.
+    examples:
+    - 6204400.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Salaries
+    - property: unit
+      value: currency
+  - name: benefits
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Total benefit dollars paid for the staff category. Rare small negatives are real refunds/restatements
+      published by the source and preserved (one row each in 2011, 2012, and 2022; minimum -191,629.60);
+      no range check applies.
+    examples:
+    - 3059444.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Benefits
+    - property: unit
+      value: currency
+  - name: salaries_and_benefits
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Total salary plus benefit dollars for the staff category. Equals salaries + benefits
+      within $1 in every row (source-published total; enforced by a quality check).
+    examples:
+    - 9263900.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Salaries and Benefits
+    - property: short_description
+      value: Total salary plus benefit dollars the district spent on this staff category in the year.
+    - property: unit
+      value: currency
+    - property: key_metric
+      value: true
+  - name: pct_revenue_gf_title_lottery
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Salaries+benefits for the category as a share of district revenue from General Fund
+      / Title / Lottery sources (0-1 decimal scale; source publishes 0-100 and is divided by 100). A ratio,
+      not a bounded proportion: the 2021 file (school year 2020-21, the COVID year) systematically publishes
+      values above 1.0 — including the state rollup — with a maximum of 1.2346, because category spending
+      exceeded the GF/Title/Lottery revenue base that year; preserved as published.'
+    examples:
+    - 0.4183
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Revenue Gf Title Lottery
+    - property: unit
+      value: ratio
+  - name: pct_revenue_total_k12
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Salaries+benefits for the category as a share of total district K-12 revenue (0-1 decimal
+      scale; source publishes 0-100 and is divided by 100). A ratio, not a bounded proportion: the 2021
+      file publishes values up to 1.0413 (2021 values run ~2x adjacent years across all metrics; likely
+      a two-year-cumulative publication); preserved as published.'
+    examples:
+    - 0.3727
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Revenue Total K12
+    - property: unit
+      value: ratio
+  - name: pct_expense_gf_title_lottery
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Salaries+benefits for the category as a share of district expenditures from General
+      Fund / Title / Lottery funds (0-1 decimal scale; source publishes 0-100 and is divided by 100).
+      A ratio, not a bounded proportion: the 2021 file systematically publishes values above 1.0 — the
+      state Teachers and Paraprofessionals rollup is 1.0798 and the maximum is 1.2731 (2021 values run
+      ~2x adjacent years across all metrics; likely a two-year-cumulative publication); preserved as published.'
+    examples:
+    - 0.4558
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Expense Gf Title Lottery
+    - property: unit
+      value: ratio
+  - name: pct_expense_total_k12
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Salaries+benefits for the category as a share of total district K-12 expenditures (0-1
+      decimal scale; source publishes 0-100 and is divided by 100). A ratio, not a bounded proportion:
+      the 2021 file publishes values up to 1.2103 (2021 values run ~2x adjacent years across all metrics;
+      likely a two-year-cumulative publication); preserved as published.'
+    examples:
+    - 0.4058
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Expense Total K12
+    - property: unit
+      value: ratio
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: staff_category_in_allowed_values
+    description: staff_category is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE staff_category IS NOT NULL AND staff_category NOT IN ('general_administration',
+      'school_administration', 'teachers_and_paraprofessionals')
+    mustBe: 0
+  - type: sql
+    name: pct_revenue_gf_title_lottery_non_negative
+    description: pct_revenue_gf_title_lottery is a ratio (>= 0; may legitimately exceed 1.0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_revenue_gf_title_lottery IS NOT NULL AND pct_revenue_gf_title_lottery
+      < 0
+    mustBe: 0
+  - type: sql
+    name: pct_revenue_total_k12_non_negative
+    description: pct_revenue_total_k12 is a ratio (>= 0; may legitimately exceed 1.0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_revenue_total_k12 IS NOT NULL AND pct_revenue_total_k12
+      < 0
+    mustBe: 0
+  - type: sql
+    name: pct_expense_gf_title_lottery_non_negative
+    description: pct_expense_gf_title_lottery is a ratio (>= 0; may legitimately exceed 1.0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_expense_gf_title_lottery IS NOT NULL AND pct_expense_gf_title_lottery
+      < 0
+    mustBe: 0
+  - type: sql
+    name: pct_expense_total_k12_non_negative
+    description: pct_expense_total_k12 is a ratio (>= 0; may legitimately exceed 1.0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_expense_total_k12 IS NOT NULL AND pct_expense_total_k12
+      < 0
+    mustBe: 0
+  - type: sql
+    name: salaries_and_benefits_reconciles_with_components
+    description: 'The published total must equal the sum of its published components: salaries_and_benefits
+      = salaries + benefits within $1 (verified: zero violations across all 14 bronze files).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE salaries IS NOT NULL AND benefits IS NOT NULL AND salaries_and_benefits
+      IS NOT NULL AND ABS(salaries + benefits - salaries_and_benefits) > 1.0
+    mustBe: 0
+  - type: sql
+    name: school_code_always_null
+    description: 'Structural fact: this is a district-only topic — the source publishes no school-level
+      rows, so school_code (kept for the shared education key shape) must be NULL on every row.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE school_code IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: metrics_never_null
+    description: 'This topic has no suppression: all seven metric columns are fully populated in every
+      row of every year (verified across all 14 bronze files). A NULL means a parsing regression or a
+      new suppression regime — either must be analyzed, not silently passed.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE salaries IS NULL OR benefits IS NULL OR salaries_and_benefits
+      IS NULL OR pct_revenue_gf_title_lottery IS NULL OR pct_revenue_total_k12 IS NULL OR pct_expense_gf_title_lottery
+      IS NULL OR pct_expense_total_k12 IS NULL
+    mustBe: 0
+  - type: sql
+    name: staff_category_complete_per_entity
+    description: Every entity (each district/RESA, and the state rollup as the NULL-district group) carries
+      exactly one row per staff category per year — three rows in total (verified across all 14 bronze
+      files).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, COALESCE(district_code, '__state__') AS entity FROM {object}
+      GROUP BY year, COALESCE(district_code, '__state__') HAVING COUNT(*) <> 3 OR COUNT(DISTINCT staff_category)
+      <> 3) AS bad_entities
+    mustBe: 0
+  - type: sql
+    name: resa_rows_present_every_year
+    description: Both eras publish the 16 RESA service-agency aggregates (district codes 850-888) at district
+      detail in every year (Era 1 as bare codes, Era 2 as DOE OTHER rows). A different count means RESA
+      rows were dropped or a new aggregate entity appeared — either must be analyzed.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NOT NULL AND LENGTH(district_code)
+      = 3 AND district_code BETWEEN '850' AND '888' GROUP BY year HAVING COUNT(DISTINCT district_code)
+      <> 16) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_rows_present_every_year
+    description: 'Every year publishes the statewide rollup: exactly 3 state rows (one per staff_category)
+      with NULL district_code. staff_category_complete_per_entity cannot catch a wholly missing state
+      group.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL GROUP BY year HAVING
+      COUNT(*) <> 3) AS bad_years
+    mustBe: 0
+customProperties:
+- property: title
+  value: District Salaries and Benefits
+- property: summary
+  value: What Georgia school districts spend on salaries and benefits by staff category, with that spending
+    as a share of district revenue and expenditures, 2011-2024.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2011-2024
+- property: schema_hash
+  value: ffaac60d83b2d20322b3c674737f23db80fbe61eabbf8d3c1b9d39848a5a7629
+- property: available_years
+  value:
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

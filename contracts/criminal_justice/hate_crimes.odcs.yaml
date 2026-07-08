@@ -1,0 +1,447 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.hate_crimes
+name: hate_crimes
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Bias-motivated (hate crime) criminal incidents reported by Georgia law-enforcement agencies
+    to the FBI''s UCR hate crime collection, aggregated from the national incident-level master file to
+    county x year x bias motivation (32 observed atomic bias motivations with the FBI''s bias-category
+    rollup), plus a statewide rollup, 1991 onward. Hate-crime reporting is voluntary and severely under-reported:
+    the number of Georgia agencies reporting any hate crime jumped from about 11 to 71 in 2019 with the
+    NIBRS transition and has declined since 2021, so year-over-year change largely reflects reporting
+    participation, not underlying incidence. A county-year with no row means no REPORTS, never zero hate
+    crime. Incidents are attributed to the reporting agency''s primary county via the ORI-to-county crosswalk.'
+  usage: 'Cite the FBI Crime Data Explorer (cde.ucr.cjis.gov) hate crime data collection. Counts are raw
+    voluntary agency reports: never interpret an absent county-year (or a low count) as low hate-crime
+    incidence — under-reporting is severe and participation varies sharply by year (read alongside agencies_reporting).
+    Sum incident_count across counties freely; never sum across bias motivations (multi-bias incidents
+    are counted once per bias). Rates require an external population denominator (not served here).'
+  limitations: 'State rows have NULL county_fips. Hate-crime reporting is voluntary and notoriously under-reported:
+    a county-year with no row means no reports were submitted, never that no hate crime occurred, and
+    absent county-years are deliberately left absent rather than zero-filled. Agency participation varies
+    sharply by year (about 2-11 Georgia agencies through 2018, 71-82 in 2019-2021, 45 by 2024, driven
+    by the NIBRS transition), so year-over-year change largely reflects reporting coverage; pre-2019 county
+    coverage is dominated by a handful of large agencies. The file has no participation roster and no
+    reporting-program field, so no coverage flag column is possible — agencies_reporting counts only agencies
+    with at least one report. Incidents are attributed to the reporting agency''s primary county (agencies
+    spanning multiple counties are not split; Atlanta PD is attributed to Fulton), which follows the agency,
+    not the incident location. Multi-bias incidents are counted once under each bias motivation, so bias-level
+    counts sum slightly above the distinct-incident total. Victim counts cover individual (human) victims
+    only; offender counts cover known offenders only. No demographic breakdowns are served: the file carries
+    offender race/ethnicity, but offender demographics do not share the victim/population semantics of
+    the demographics dimension. The FBI publishes hate-crime counts unsuppressed.'
+tags:
+- criminal_justice
+- fbi crime data explorer, national hate crime master file
+- hate_crimes
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/hate_crimes/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/hate_crimes/**/*.parquet
+  format: parquet
+schema:
+- name: hate_crimes
+  logicalType: object
+  physicalType: parquet
+  physicalName: hate_crimes
+  description: hate_crimes fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, bias_motivation, bias_category (geography
+    columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: fbi_cde
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - bias_motivation
+    - bias_category
+  - property: key_metric
+    value: incident_count
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/hate_crimes/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), counties detail
+      query: SELECT * FROM hate_crimes WHERE year = 2024 LIMIT 100
+    - description: Filter by bias_motivation = anti_black_or_african_american
+      query: SELECT * FROM hate_crimes WHERE bias_motivation = 'anti_black_or_african_american' AND year
+        = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year the incidents occurred (data year; matches the incident date on every row).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the reporting agency's primary county;
+      FK to the counties dimension. NULL on statewide rollup rows. Agencies spanning multiple counties
+      (16 of the 224 reporting agencies, covering about 30% of incidents — dominated by Atlanta PD, attributed
+      to Fulton) are attributed wholly to their primary county, never split.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rollup rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: bias_motivation
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Atomic FBI bias motivation, snake_cased from the national hate-crime vocabulary (35 national
+      values; 32 observed in Georgia). A multi-bias incident (15 in Georgia) appears once under EACH of
+      its bias motivations, so incident_count is NOT additive across bias motivations — sum within one
+      bias motivation or use bias_category with care. Each bias_motivation maps to exactly one bias_category.
+    examples:
+    - 'anti_black_or_african_american'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Bias Motivation
+    - property: short_description
+      value: Atomic FBI bias motivation (e.g. anti_black_or_african_american, anti_jewish, anti_gay_male).
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: bias_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'The FBI''s standard bias-category rollup, functionally dependent on bias_motivation:
+      race_ethnicity_ancestry, religion, sexual_orientation, disability, gender, gender_identity, plus
+      unknown for the national ''motivation not known'' value (no Georgia incidents yet). Filter or group
+      by it for category-level counts; note a multi-bias incident spanning two categories is counted once
+      under each.'
+    examples:
+    - 'race_ethnicity_ancestry'
+    enum:
+    - 'disability'
+    - 'gender'
+    - 'gender_identity'
+    - 'race_ethnicity_ancestry'
+    - 'religion'
+    - 'sexual_orientation'
+    - 'unknown'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Bias Category
+    - property: short_description
+      value: 'FBI bias category: race_ethnicity_ancestry, religion, sexual_orientation, disability, gender,
+        gender_identity (or unknown).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: incident_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Number of distinct bias-motivated incidents with this bias motivation reported by agencies
+      attributed to the county in the year. Raw agency reports: hate-crime reporting is voluntary and
+      severely under-reported, and agency participation varies sharply by year (about 11 agencies before
+      2019, 71-82 in 2019-2021, declining since) — read alongside agencies_reporting, and never treat
+      an absent county-year as zero hate crime. Additive across counties (an incident belongs to one agency)
+      but NOT across bias motivations: a multi-bias incident is counted once under each of its biases.'
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Incident Count
+    - property: short_description
+      value: Hate-crime incidents with this bias motivation reported in the county and year (raw reports
+        — reporting is voluntary and under-reported).
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: victim_count
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Total individual (human) victims across the row''s incidents. 0 is real: it means every
+      victim was an entity (business, government, religious organization), e.g. vandalism of an institution.
+      NULL when any contributing incident''s individual-victim count was unreported (15 Georgia incidents,
+      2017-2019) — a sum is never understated. One extreme value is preserved as published: a 2017 Gwinnett
+      County intimidation incident with 100 individual victims (mass-victim incident; conceivable, not
+      masked). Victims of a multi-bias incident are counted under each of its bias motivations.'
+    examples:
+    - 14
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Victim Count
+    - property: short_description
+      value: Individual (human) victims across the row's incidents; 0 means only entity victims (businesses,
+        institutions).
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the individual-victim count was unreported for any contributing incident (15 Georgia
+        incidents, 2017-2019).
+  - name: known_offender_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Total KNOWN offenders across the row''s incidents (the FBI convention: an incident whose
+      offenders were never identified reports zero known offenders — about a third of Georgia incidents).
+      A count lower than incident_count therefore signals unidentified offenders, not fewer offenders.
+      Offenders of a multi-bias incident are counted under each of its bias motivations.'
+    examples:
+    - 9
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Known Offender Count
+    - property: short_description
+      value: Known offenders across the row's incidents; incidents with unidentified offenders contribute
+        zero.
+    - property: unit
+      value: count
+  - name: agencies_reporting
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Coverage companion: the number of distinct agencies (by primary county on county rows;
+      statewide on state rows) that reported AT LEAST ONE hate-crime incident in the year. The source
+      file contains no participation roster, so agencies that participated but reported zero hate crimes
+      are indistinguishable from non-participants — this counts agencies with reports, not agencies covered.
+      Constant across bias motivations within a county-year. Essential context: Georgia went from about
+      2-11 reporting agencies per year (1991-2018) to 71-82 (2019-2021), then declined to 45 by 2024 —
+      trends largely track reporting coverage.'
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Agencies Reporting
+    - property: short_description
+      value: Agencies in the geography that reported at least one hate crime that year — a coverage companion,
+        NOT a participation roster.
+    - property: unit
+      value: count
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: bias_category_in_allowed_values
+    description: bias_category is one of the 7 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE bias_category IS NOT NULL AND bias_category NOT IN ('disability',
+      'gender', 'gender_identity', 'race_ethnicity_ancestry', 'religion', 'sexual_orientation', 'unknown')
+    mustBe: 0
+  - type: sql
+    name: incident_count_non_negative
+    description: incident_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE incident_count IS NOT NULL AND incident_count < 0
+    mustBe: 0
+  - type: sql
+    name: victim_count_non_negative
+    description: victim_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE victim_count IS NOT NULL AND victim_count < 0
+    mustBe: 0
+  - type: sql
+    name: known_offender_count_non_negative
+    description: known_offender_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE known_offender_count IS NOT NULL AND known_offender_count
+      < 0
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_non_negative
+    description: agencies_reporting is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NOT NULL AND agencies_reporting <
+      0
+    mustBe: 0
+  - type: sql
+    name: incident_count_at_least_one
+    description: Rows exist only for county-year-bias combinations with at least one reported incident
+      — a zero or negative count means the aggregation broke.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE incident_count IS NULL OR incident_count < 1
+    mustBe: 0
+  - type: sql
+    name: state_incident_total_covers_county_sum
+    description: The state row counts ALL agencies (including any statewide agency with no county), so
+      for every (year, bias_motivation) with county rows a state row must exist with incident_count >=
+      the county sum (equal today; a statewide-agency report would make it strictly greater).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, bias_motivation, MAX(CASE WHEN county_fips IS NULL THEN
+      incident_count END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN incident_count END)
+      AS county_sum FROM {object} GROUP BY year, bias_motivation) WHERE county_sum IS NOT NULL AND (state_total
+      IS NULL OR state_total < county_sum)
+    mustBe: 0
+  - type: sql
+    name: state_known_offender_total_covers_county_sum
+    description: known_offender_count is a plain sum over incidents, so the state row must be >= the county
+      sum for every (year, bias_motivation) — equal today, strictly greater only if a statewide agency
+      ever reports.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, bias_motivation, MAX(CASE WHEN county_fips IS NULL THEN
+      known_offender_count END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN known_offender_count
+      END) AS county_sum FROM {object} GROUP BY year, bias_motivation) WHERE county_sum IS NOT NULL AND
+      (state_total IS NULL OR state_total < county_sum)
+    mustBe: 0
+  - type: sql
+    name: state_victim_total_covers_county_sum
+    description: 'victim_count is a plain sum over incidents, so the state row must be >= the county sum
+      for every (year, bias_motivation). NULL-aware: the check only binds where both cells are non-NULL
+      — NULL propagation means a state cell containing any NULL-victim incident is itself NULL and exempt.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, bias_motivation, MAX(CASE WHEN county_fips IS NULL THEN
+      victim_count END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN victim_count END) AS
+      county_sum FROM {object} GROUP BY year, bias_motivation) WHERE county_sum IS NOT NULL AND state_total
+      IS NOT NULL AND state_total < county_sum
+    mustBe: 0
+  - type: sql
+    name: bias_motivation_determines_category
+    description: bias_category is a denormalized attribute of bias_motivation (pinned national vocabulary)
+      — each bias_motivation must map to exactly one category, or category rollups would double count.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT bias_motivation, COUNT(DISTINCT bias_category) AS nc FROM {object}
+      GROUP BY bias_motivation) WHERE nc > 1
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_constant_within_year_county
+    description: agencies_reporting describes the geography's reporting agencies for the year, not the
+      bias motivation — it must be identical on every row of a (year, county) group (and on every state
+      row of a year).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, COUNT(DISTINCT agencies_reporting) AS n FROM
+      {object} GROUP BY year, county_fips) WHERE n > 1
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_at_least_one
+    description: Every row's incidents came from at least one reporting agency in the geography.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NULL OR agencies_reporting < 1
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_not_exceeding_incident_sum
+    description: Each counted agency reported at least one incident, and summing incident_count over bias
+      motivations only overstates distinct incidents, so agencies_reporting <= the (year, county) incident_count
+      sum.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(agencies_reporting) AS agencies, SUM(incident_count)
+      AS incident_sum FROM {object} GROUP BY year, county_fips) WHERE agencies > incident_sum
+    mustBe: 0
+customProperties:
+- property: title
+  value: FBI Hate Crime Incidents by County
+- property: summary
+  value: Hate crime incidents reported by Georgia law-enforcement agencies (FBI UCR hate crime collection),
+    by county, year, and bias motivation, 1991 onward.
+- property: source
+  value: FBI Crime Data Explorer, national hate crime master file
+- property: source_url
+  value: https://cde.ucr.cjis.gov
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 1991-2024
+- property: schema_hash
+  value: e296e679430a7aa5e2d66cead62d4c863e487bdecd4316a0acef08ed693c1a5a
+- property: available_years
+  value:
+  - 1991
+  - 1992
+  - 1993
+  - 1994
+  - 1995
+  - 1996
+  - 1997
+  - 1998
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

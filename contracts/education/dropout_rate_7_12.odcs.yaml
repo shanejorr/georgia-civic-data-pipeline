@@ -1,0 +1,380 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.dropout_rate_7_12
+name: dropout_rate_7_12
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Number and rate of grade 7-12 dropouts for Georgia public schools, with official district and
+    state rollups, by demographic subgroup (race/ethnicity, gender, economic status, English proficiency,
+    migrant status, disability status). Published by GOSA for school years 2010-11 through 2023-24.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: 'Suppressed cells are NULL (not zero): GOSA suppresses any cell below the n=10 reporting
+    threshold, which blanks ~78-83% of school-level rows in every year — school-level analyses should
+    expect sparse coverage, and summing only published subgroup counts undercounts true totals at school
+    grain (use district or state rows for official aggregates). State rows have NULL district_code and
+    school_code; district rows have NULL school_code. The race axis uses the combined asian_pacific_islander
+    bucket — not comparable row-for-row with split-convention topics without aggregating those topics''
+    asian + pacific_islander rows at query time. english_learners rows are absent in 2020-2022.'
+tags:
+- education
+- gosa
+- dropout_rate_7_12
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/dropout_rate_7_12/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/dropout_rate_7_12/**/*.parquet
+  format: parquet
+schema:
+- name: dropout_rate_7_12
+  logicalType: object
+  physicalType: parquet
+  physicalName: dropout_rate_7_12
+  description: dropout_rate_7_12 fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+  - property: key_metric
+    value: dropout_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/dropout_rate_7_12/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM dropout_rate_7_12 WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM dropout_rate_7_12 WHERE district_code = '601' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending (spring) calendar year of the school year (e.g. 2024 for 2023-24), parsed from
+      the source's LONG_SCHOOL_YEAR and cross-checked against the filename.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit state-charter codes. NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). NULL on district- and state-level rows.
+    examples:
+    - '0111'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic subgroup (FK to the global demographics dimension). Race buckets use the
+      combined asian_pacific_islander key (pre-1997 OMB convention): the source publishes a single ''Asian/Pacific
+      Islander'' label and its six race buckets sum exactly to the ''all'' total at the state level in
+      every year, so Pacific Islanders are folded in, never published separately. english_learners rows
+      are absent in 2020-2022 (the source dropped the Limited English Proficient subgroup in those files).
+      ''all'' is the unfiltered total and overlaps every other value; subgroups are mutually exclusive
+      only within their own category (race, gender, economic, special population).'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'migrant'
+    - 'multiracial'
+    - 'native_american'
+    - 'not_economically_disadvantaged'
+    - 'students_with_disabilities'
+    - 'students_without_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Student subgroup the row describes (race, gender, economic status, English learner, migrant,
+        or disability); 'all' is every student.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_dropouts
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of students in grades 7-12 who dropped out during the school year. Published values
+      are always >= 10 because GOSA suppresses smaller cells; ~78-83% of school-level rows are suppressed
+      (NULL) in every year. Always co-suppressed with dropout_rate.
+    examples:
+    - 27
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Dropouts
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (cell below the n=10 reporting threshold; blank cells in 2011-2020 sources,
+        TFS literals in 2021-2024).
+    - property: metric_component
+      value: numerator
+  - name: dropout_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Grade 7-12 dropout rate as a proportion (0-1 scale): dropouts divided by the subgroup''s
+      grade 7-12 enrollment. The source publishes 0-100 percentages with one decimal place (observed 0.2-93.6
+      across all years); divided by 100. Always co-suppressed with num_dropouts.'
+    examples:
+    - 0.023
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Dropout Rate
+    - property: short_description
+      value: Share of the subgroup's grade 7-12 students who dropped out during the school year, on a
+        0-1 scale; lower is better.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA (cell below the n=10 reporting threshold; always co-suppressed with num_dropouts).
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 15 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'economically_disadvantaged', 'english_learners', 'female', 'hispanic',
+      'male', 'migrant', 'multiracial', 'native_american', 'not_economically_disadvantaged', 'students_with_disabilities',
+      'students_without_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: num_dropouts_non_negative
+    description: num_dropouts is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_dropouts IS NOT NULL AND num_dropouts < 0
+    mustBe: 0
+  - type: sql
+    name: dropout_rate_within_unit_interval
+    description: dropout_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE dropout_rate IS NOT NULL AND (dropout_rate < 0 OR dropout_rate
+      > 1)
+    mustBe: 0
+  - type: sql
+    name: dropout_metrics_co_suppressed
+    description: 'GOSA suppresses num_dropouts and dropout_rate together in every era (blank cells 2011-2020,
+      TFS 2021-2024): no row may have exactly one of the two metrics NULL.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (num_dropouts IS NULL) <> (dropout_rate IS NULL)
+    mustBe: 0
+  - type: sql
+    name: state_rows_never_suppressed
+    description: 'GOSA publishes unsuppressed statewide aggregates in every year: state-level rows (district_code
+      and school_code both NULL) must carry non-NULL num_dropouts and dropout_rate.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL AND school_code IS NULL AND (num_dropouts
+      IS NULL OR dropout_rate IS NULL)
+    mustBe: 0
+  - type: sql
+    name: num_dropouts_meets_reporting_threshold
+    description: Every published num_dropouts is >= 10 — GOSA's n=10 cell-size suppression threshold (verified
+      across all bronze years). A smaller value means a suppression regression or a scale/column-swap
+      error.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_dropouts IS NOT NULL AND num_dropouts < 10
+    mustBe: 0
+  - type: sql
+    name: state_race_partition_sums_to_all
+    description: 'At the state level the six mutually exclusive race buckets partition the dropout population:
+      their num_dropouts values sum exactly to the ''all'' total in every year (the §5b math test that
+      proves the combined Asian/Pacific Islander convention). State rows are never suppressed, so the
+      sum is NULL-safe.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL GROUP BY year HAVING SUM(CASE WHEN demographic IN ('asian_pacific_islander', 'black', 'hispanic',
+      'multiracial', 'native_american', 'white') THEN num_dropouts ELSE 0 END) <> MAX(CASE WHEN demographic
+      = 'all' THEN num_dropouts END)) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_gender_partition_sums_to_all
+    description: At the state level male + female num_dropouts sums exactly to the 'all' total in every
+      year (verified across all bronze years; state rows are never suppressed).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL GROUP BY year HAVING SUM(CASE WHEN demographic IN ('male', 'female') THEN num_dropouts ELSE
+      0 END) <> MAX(CASE WHEN demographic = 'all' THEN num_dropouts END)) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_economic_partition_sums_to_all
+    description: At the state level economically_disadvantaged + not_economically_disadvantaged num_dropouts
+      sums exactly to the 'all' total in every year (verified across all bronze years; state rows are
+      never suppressed).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL GROUP BY year HAVING SUM(CASE WHEN demographic IN ('economically_disadvantaged', 'not_economically_disadvantaged')
+      THEN num_dropouts ELSE 0 END) <> MAX(CASE WHEN demographic = 'all' THEN num_dropouts END)) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_disability_partition_sums_to_all
+    description: At the state level students_with_disabilities + students_without_disabilities num_dropouts
+      sums exactly to the 'all' total in every year (verified across all bronze years; state rows are
+      never suppressed).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL GROUP BY year HAVING SUM(CASE WHEN demographic IN ('students_with_disabilities', 'students_without_disabilities')
+      THEN num_dropouts ELSE 0 END) <> MAX(CASE WHEN demographic = 'all' THEN num_dropouts END)) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: english_learners_absent_2020_2022
+    description: 'The source dropped the Limited English Proficient subgroup in the 2020, 2021, and 2022
+      files (present in all other years): no english_learners rows may exist in those years.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE demographic = 'english_learners' AND year IN (2020, 2021,
+      2022)
+    mustBe: 0
+customProperties:
+- property: title
+  value: Grade 7-12 Dropout Rates
+- property: summary
+  value: Number and rate of grade 7-12 students who dropped out, by Georgia school, district, and demographic
+    subgroup, 2011-2024.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2011-2024
+- property: schema_hash
+  value: c579db0c0fb89ce1b3438bfe3381aa7ed0de2af6f694e1cd84aedf59c3122c16
+- property: available_years
+  value:
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

@@ -1,0 +1,13 @@
+{
+  "_description": "Proper-noun overrides applied after pl.Expr.str.to_titlecase() by title_case_name() in src/utils/transformers.py. Add an entry when title-casing produces a visibly wrong form for a Georgia place, school, or program name. Keys are substring replacements applied literally (not regex) to the title-cased output. Leading/trailing spaces encode word-boundary intent.",
+  "overrides": {
+    "Dekalb": "DeKalb",
+    "Mcduffie": "McDuffie",
+    "Mcintosh": "McIntosh",
+    "Mcrae": "McRae",
+    "Steam": "STEAM",
+    "Ctae": "CTAE",
+    " Ii": " II",
+    " Iii": " III"
+  }
+}

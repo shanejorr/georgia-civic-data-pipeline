@@ -1,0 +1,353 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.district_filings
+name: district_filings
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Criminal defendants filed, terminated, and convicted in Georgia''s three federal judicial
+    districts (Northern, Middle, Southern), by federal fiscal year (October 1 - September 30), FY2000
+    forward, aggregated from the Federal Judicial Center''s Integrated Database (IDB) defendant-level
+    records. Counts follow the Administrative Office of the U.S. Courts (AOUSC) published-table conventions:
+    a defendant is counted as filed or terminated in a fiscal year via the AOUSC count flags (including
+    inter-district transfers), a felony filing is a defendant whose most severe filing charge is a felony,
+    and a conviction is a termination whose final disposition is a guilty plea, nolo contendere plea,
+    bench or jury conviction, or guilty-but-insane verdict. This is a federal-district-grain dataset:
+    districts span many counties, so no county geography applies.'
+  usage: 'Cite the Federal Judicial Center''s Integrated Database (IDB), criminal defendants file (US
+    government work, public domain). Counts follow AOUSC published-table conventions including inter-district
+    transfers: a transferred defendant is counted in both districts, so statewide sums can slightly double-count
+    (under 1.5%). Filings and terminations are independent fiscal-year event counts -- terminations include
+    cases filed in earlier years, so defendants_convicted relates to defendants_terminated (same year),
+    never to defendants_filed. Rates per resident require an external population denominator (not served
+    here).'
+  limitations: 'The source reaches back to FY1996 in the IDB''s current-format criminal file (and to 1970
+    in an earlier-format archive that is not ingested), but this dataset is intentionally floored at FY2000
+    (project year floor). The final fiscal year is partial until it closes -- FY2026 covers roughly its
+    first three quarters in the current snapshot (the IDB updates quarterly), so treat the latest year
+    as provisional; its filing counts may also include late-reported proceedings that commenced in the
+    prior fiscal year (subsequent quarterly refreshes reconcile these to the proceeding year), so year-over-year
+    comparisons should exclude the in-progress year. Data are served at federal-district grain only: the
+    IDB''s county field is documented as unreliable for criminal cases, and federal districts span many
+    counties, so no county breakdown is possible. Sentence length, probation, and fine metrics are deliberately
+    not served: the IDB encodes life sentences, death sentences, and sealed sentences as sentinel codes
+    whose exclusion would bias any average (the U.S. Sentencing Commission district_sentences topic covers
+    sentencing at the same district grain). Petty offenses assigned to magistrate judges are not reported
+    to the AOUSC. Counts include inter-district transfers (counted in both districts) and reopened proceedings,
+    per the AOUSC published-table convention. Zero values are true zeros (complete census of federal criminal
+    defendants); the source has no suppression.'
+tags:
+- criminal_justice
+- federal judicial center, integrated database
+- district_filings
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/district_filings/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/district_filings/**/*.parquet
+  format: parquet
+schema:
+- name: district_filings
+  logicalType: object
+  physicalType: parquet
+  physicalName: district_filings
+  description: district_filings fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, federal_district.
+  customProperties:
+  - property: sub_topic
+    value: federal_justice
+  - property: detail_levels
+    value:
+    - federal_districts
+  - property: default_detail
+    value: federal_districts
+  - property: grain
+    value:
+    - year
+    - federal_district
+  - property: key_metric
+    value: defendants_filed
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/district_filings/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value: []
+  - property: example_queries
+    value:
+    - description: Latest year (2026), federal_districts detail
+      query: SELECT * FROM district_filings WHERE year = 2026 LIMIT 100
+    - description: Filter by federal_district = georgia_northern
+      query: SELECT * FROM district_filings WHERE federal_district = 'georgia_northern' AND year = 2026
+        LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Federal FISCAL year (October 1 of the prior calendar year through September 30; e.g.
+      2025 = Oct 2024 - Sep 2025) -- the IDB snapshot fiscal year. Serving starts at FY2000 (project year
+      floor); the final year is partial until the fiscal year closes (FY2026 covers roughly its first
+      three quarters in the current snapshot).
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: federal_district
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Georgia federal judicial district where the case was located: georgia_northern (Atlanta;
+      IDB code 3E), georgia_middle (Macon/Columbus; 3G), georgia_southern (Savannah/Augusta; 3J). Federal
+      districts span many counties and do not align with any county geography -- this column is the dataset''s
+      own geographic grain, not a foreign key to the counties dimension.'
+    examples:
+    - 'georgia_northern'
+    enum:
+    - 'georgia_middle'
+    - 'georgia_northern'
+    - 'georgia_southern'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Federal District
+    - property: short_description
+      value: 'Georgia federal judicial district: georgia_northern (Atlanta), georgia_middle (Macon/Columbus),
+        georgia_southern (Savannah/Augusta).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: defendants_filed
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Number of criminal defendants filed in the district during the fiscal year, counted with
+      the AOUSC's 'Count Filings Including Transfers' flag -- the convention of the published Judicial
+      Business D tables. Includes defendants received by inter-district transfer and proceedings recommenced
+      by reopen, remand, appeal, or retrial; a defendant transferred between districts is counted in both,
+      so summing districts can double-count a small number of defendants (the excluding-transfers variant
+      differs by under 1.5% in every Georgia year). 0 is a true zero (complete census). Petty offenses
+      assigned to magistrate judges are not reported to the AOUSC and are therefore not counted.
+    examples:
+    - 607
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Defendants Filed
+    - property: short_description
+      value: Criminal defendants filed in the district during the fiscal year (AOUSC counting rules, including
+        inter-district transfers).
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: felony_defendants_filed
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Filed defendants (subset of defendants_filed) whose most severe filing charge carries
+      the felony offense level (IDB FOFFLVL1 = 4). The remainder of defendants_filed are class A misdemeanor
+      or petty-offense filings. Classification uses the first (most severe) of up to five filing charges,
+      as sorted by the AOUSC's severity code; the offense level is populated for every counted filing
+      in the served years. 0 is a true zero.
+    examples:
+    - 599
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Felony Defendants Filed
+    - property: short_description
+      value: Filed defendants whose most severe filing charge is a felony (subset of defendants_filed).
+    - property: unit
+      value: count
+  - name: defendants_terminated
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Number of criminal defendants whose case was terminated (closed) in the district during
+      the fiscal year, counted with the AOUSC's 'Count Terminations Including Transfers' flag (equivalent
+      to the termination date falling inside the fiscal year -- verified exactly in every served year).
+      Terminations in a fiscal year include cases filed in earlier years, so this is not a subset of the
+      same year's defendants_filed. 0 is a true zero.
+    examples:
+    - 575
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Defendants Terminated
+    - property: short_description
+      value: Criminal defendants whose case terminated in the district during the fiscal year (AOUSC counting
+        rules, including inter-district transfers).
+    - property: unit
+      value: count
+  - name: defendants_convicted
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Terminated defendants (subset of defendants_terminated) whose final disposition on the
+      most severely disposed charge is a conviction: guilty plea, nolo contendere plea, conviction by
+      the court after trial, conviction by jury, or guilty-but-insane verdict (IDB DISP1 codes 4, 5, 8,
+      9, 17, 19 -- the field the AOUSC uses to report a defendant''s final disposition). Dismissals, acquittals,
+      pretrial diversions, NARA commitments, transfers, and mistrials are not counted as convictions.
+      0 is a true zero.'
+    examples:
+    - 507
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Defendants Convicted
+    - property: short_description
+      value: Terminated defendants convicted on at least one count (guilty plea, nolo, bench/jury conviction;
+        subset of defendants_terminated).
+    - property: unit
+      value: count
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: federal_district_in_allowed_values
+    description: federal_district is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE federal_district IS NOT NULL AND federal_district NOT IN
+      ('georgia_middle', 'georgia_northern', 'georgia_southern')
+    mustBe: 0
+  - type: sql
+    name: defendants_filed_non_negative
+    description: defendants_filed is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE defendants_filed IS NOT NULL AND defendants_filed < 0
+    mustBe: 0
+  - type: sql
+    name: felony_defendants_filed_non_negative
+    description: felony_defendants_filed is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE felony_defendants_filed IS NOT NULL AND felony_defendants_filed
+      < 0
+    mustBe: 0
+  - type: sql
+    name: defendants_terminated_non_negative
+    description: defendants_terminated is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE defendants_terminated IS NOT NULL AND defendants_terminated
+      < 0
+    mustBe: 0
+  - type: sql
+    name: defendants_convicted_non_negative
+    description: defendants_convicted is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE defendants_convicted IS NOT NULL AND defendants_convicted
+      < 0
+    mustBe: 0
+  - type: sql
+    name: no_pre_2000_fiscal_years
+    description: Gold serves FY2000 forward only (project year floor) -- earlier fiscal years exist in
+      the source and must never appear.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year < 2000
+    mustBe: 0
+  - type: sql
+    name: district_year_grid_complete
+    description: 'The grid is densified: every served fiscal year must carry exactly one row for each
+      of the three Georgia federal districts (a missing district-year would be a silently dropped true
+      zero).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, COUNT(DISTINCT federal_district) AS n_districts, COUNT(*)
+      AS n_rows FROM {object} GROUP BY year) WHERE n_districts != 3 OR n_rows != 3
+    mustBe: 0
+  - type: sql
+    name: metrics_never_null
+    description: The IDB is a complete census and the grid is zero-densified -- every metric is a real
+      count, so a NULL means the densification broke, never real missingness.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE defendants_filed IS NULL OR felony_defendants_filed IS
+      NULL OR defendants_terminated IS NULL OR defendants_convicted IS NULL
+    mustBe: 0
+  - type: sql
+    name: felony_filed_within_filed
+    description: felony_defendants_filed counts a subset of defendants_filed (most severe filing charge
+      is a felony), so it can never exceed the filing count.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE felony_defendants_filed > defendants_filed
+    mustBe: 0
+  - type: sql
+    name: convicted_within_terminated
+    description: defendants_convicted counts a subset of defendants_terminated (terminations whose final
+      disposition is a conviction), so it can never exceed the termination count.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE defendants_convicted > defendants_terminated
+    mustBe: 0
+customProperties:
+- property: title
+  value: Federal Criminal Defendants Filed by District
+- property: summary
+  value: Criminal defendants filed, terminated, and convicted in Georgia's three federal court districts
+    per federal fiscal year, FY2000 onward, from the Federal Judicial Center's Integrated Database.
+- property: source
+  value: Federal Judicial Center, Integrated Database (IDB) -- criminal defendants filed, terminated,
+    and pending, FY1996 to present
+- property: source_url
+  value: https://www.fjc.gov/research/idb/criminal-defendants-filed-terminated-and-pending-fy-1996-present
+- property: update_frequency
+  value: quarterly (IDB refresh); served as an annual fiscal-year series
+- property: year_range
+  value: 2000-2026
+- property: schema_hash
+  value: 5003140ea08dd4e100bf018fe5437653a0a243287f6a52eb0aae834e7d2dcdfb
+- property: available_years
+  value:
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+- property: year_gaps
+  value: []

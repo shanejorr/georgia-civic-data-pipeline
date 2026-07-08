@@ -1,0 +1,409 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.enrollment_demographic_shares
+name: enrollment_demographic_shares
+version: 2.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Office of Student Achievement (GOSA) enrollment demographic shares. For every Georgia
+    public school, school district, and the state as a whole, the share of enrollment in each of 12 demographic
+    subgroups: six race/ethnicity buckets (Asian/Pacific Islander, Black, Hispanic, Native American, Multiracial,
+    White), two sexes (male, female — published 2011 and 2018 onward), and four special populations (migrant
+    — published 2011 onward, economically disadvantaged, students with disabilities, English learners).
+    This topic is COMPUTED from the shared GOSA ''Enrollment by Subgroup Programs'' bronze (FTE enrollment
+    disaggregated by subgroup); the companion enrollment_program_participation topic exposes the program-participation
+    side of the same files. enrollment_ratio is the share GOSA publishes for each subgroup: the subgroup''s
+    FTE count over the entity''s total FTE enrollment (October snapshot denominator). Coverage spans school
+    years 2003-04 through 2023-24. The 2004-2010 files also carry the NCLB-era Met AYP and Improvement
+    Status indicators, denormalized across the 12 demographic rows per entity-year and NULL from 2011
+    on (AYP retired). Demographics whose column a source year does not publish (pre-2011 migrant/male/female;
+    2012-2017 male/female) are emitted with NULL enrollment_ratio so the 12-demographic grid is uniform
+    across years.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- governor's office of student achievement
+- enrollment_demographic_shares
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/enrollment_demographic_shares/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/enrollment_demographic_shares/**/*.parquet
+  format: parquet
+schema:
+- name: enrollment_demographic_shares
+  logicalType: object
+  physicalType: parquet
+  physicalName: enrollment_demographic_shares
+  description: enrollment_demographic_shares fact table, year-partitioned Parquet (split by detail level
+    where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+  - property: key_metric
+    value: enrollment_ratio
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/enrollment_demographic_shares/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM enrollment_demographic_shares WHERE year = 2024 LIMIT 100
+    - description: Economically disadvantaged share in 2024
+      query: SELECT * FROM enrollment_demographic_shares WHERE demographic = 'economically_disadvantaged'
+        AND year = 2024 LIMIT 100
+    - description: 'AYP-era slice: met_ayp = ''yes'' in 2010 (met_ayp / improvement_status are only populated
+        2004-2010)'
+      query: SELECT * FROM enrollment_demographic_shares WHERE met_ayp = 'yes' AND year = 2010 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (2024 = the 2023-24 school year). Sourced from
+      LONG_SCHOOL_YEAR for 2011+ (cross-checked against the filename); from the bronze filename for 2004-2010.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded for standard districts,
+      7-digit for charter districts. NULL on state-level aggregate rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit zero-padded GOSA school code (composite FK to schools dimension with district_code).
+      NULL on district- and state-level aggregate rows.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Canonical demographic code (FK to demographics dimension). Exactly 12 values: asian_pacific_islander,
+      black, hispanic, native_american, multiracial, white, migrant, economically_disadvantaged, students_with_disabilities,
+      english_learners, male, female. The bronze ''Asian'' bucket is GOSA''s pre-1997 OMB combined Asian
+      + Pacific Islander bucket (the source publishes only 6 race buckets and never a separate Pacific
+      Islander column), so it maps to asian_pacific_islander per data-cleaning-standards section 5b. No
+      ''all'' row exists — GOSA publishes no category-total share in this report.'
+    examples:
+    - 'black'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'migrant'
+    - 'multiracial'
+    - 'native_american'
+    - 'students_with_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Which demographic subgroup the share is for; one of 12 race, sex, and special-population
+        codes (no 'all' row).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: met_ayp
+    logicalType: string
+    physicalType: string
+    required: false
+    description: NCLB-era Adequate Yearly Progress indicator (yes/no), published 2004-2010 only. An entity-level
+      value repeated (denormalized) across the 12 demographic rows of the same (year, district, school)
+      tuple. Bronze sentinels blank/N/A are NULL.
+    examples:
+    - 'yes'
+    enum:
+    - 'no'
+    - 'yes'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Met Ayp
+    - property: short_description
+      value: NCLB-era Adequate Yearly Progress flag (yes/no); populated 2004-2010 only, NULL afterward.
+    - property: null_meaning
+      value: NULL for 2011+ (AYP retired) and for 2004-2010 rows whose bronze value was blank or N/A.
+    - property: has_total
+      value: false
+  - name: improvement_status
+    logicalType: string
+    physicalType: string
+    required: false
+    description: NCLB-era school improvement-status code (adeq, adeq_dnm, dist, ni, ni_ayp), published
+      2004-2010 only and denormalized across the 12 demographic rows per entity-year. Bronze sentinels
+      '.' and blank are NULL.
+    examples:
+    - 'adeq'
+    enum:
+    - 'adeq'
+    - 'adeq_dnm'
+    - 'dist'
+    - 'ni'
+    - 'ni_ayp'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Improvement Status
+    - property: short_description
+      value: NCLB-era school improvement-status code; populated 2004-2010 only, NULL afterward.
+    - property: null_meaning
+      value: NULL for 2011+ (AYP retired) and for 2004-2010 rows whose bronze value was blank or '.'.
+    - property: has_total
+      value: false
+  - name: enrollment_ratio
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Share of the entity''s total FTE enrollment in this demographic, on the 0-1 decimal
+      scale (bronze 0-100 divided by 100). NULL when the bronze cell was suppressed (TFS — program-wide
+      from 2023) or when the source year does not publish the demographic''s column (pre-2011 migrant/male/female;
+      2012-2017 male/female; 2011 additionally suppresses English-learner shares on ~87% of school rows).
+      Declared unit: ratio rather than proportion per section 4a: GOSA''s published shares for economically_disadvantaged
+      and students_with_disabilities legitimately exceed 1.0 at alternative/behavioral/early-childhood/state-special
+      schools in 2004-2010 where the served count exceeds the October FTE snapshot denominator (verified
+      maxima: 1.32 ED at 2008 Mountain Creek Academy, 1.17 SWD at 2004 Butler Early Childhood Center);
+      all other demographics stay within [0, 1.02] (rounding artifacts). Values are preserved per section
+      4b (extreme-but-conceivable, not impossible). Note the statewide economically_disadvantaged share
+      dips to 0.45 in 2022 between 0.56 (2021) and 0.59 (2023) — bronze-confirmed as published, likely
+      a pandemic-era direct-certification artifact; treat the 2022 ED series with care.'
+    examples:
+    - 0.25
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Enrollment Ratio
+    - property: short_description
+      value: This subgroup's share of the entity's total FTE enrollment, on a 0-1 scale (may exceed 1.0
+        for ED/SWD at some special schools).
+    - property: unit
+      value: ratio
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 12 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('asian_pacific_islander',
+      'black', 'economically_disadvantaged', 'english_learners', 'female', 'hispanic', 'male', 'migrant',
+      'multiracial', 'native_american', 'students_with_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: met_ayp_in_allowed_values
+    description: met_ayp is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE met_ayp IS NOT NULL AND met_ayp NOT IN ('no', 'yes')
+    mustBe: 0
+  - type: sql
+    name: improvement_status_in_allowed_values
+    description: improvement_status is one of the 5 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE improvement_status IS NOT NULL AND improvement_status NOT
+      IN ('adeq', 'adeq_dnm', 'dist', 'ni', 'ni_ayp')
+    mustBe: 0
+  - type: sql
+    name: enrollment_ratio_non_negative
+    description: enrollment_ratio is a ratio (>= 0; may legitimately exceed 1.0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE enrollment_ratio IS NOT NULL AND enrollment_ratio < 0
+    mustBe: 0
+  - type: sql
+    name: enrollment_ratio_sane_upper_bound
+    description: 'enrollment_ratio is unit: ratio, so the derived range check only enforces >= 0 — an
+      unscaled 0-100 regression would slip through. The legitimate above-1.0 ratios (ED/SWD at alternative/early-childhood/state-special
+      schools, 2004-2010) top out at a verified 1.32, so any value above 1.5 means an unscaled value,
+      not a real share.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE enrollment_ratio IS NOT NULL AND enrollment_ratio > 1.5
+    mustBe: 0
+  - type: sql
+    name: ayp_columns_null_post_2010
+    description: 'Structural fact: the NCLB AYP program ended after the 2009-10 school year and the 2011+
+      bronze publishes no Met AYP / Improvement Status columns, so both categoricals must be NULL on every
+      row from 2011 on.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year >= 2011 AND (met_ayp IS NOT NULL OR improvement_status
+      IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: era_gap_demographics_null
+    description: 'Structural fact: the pre-2011 bronze publishes no migrant/male/female columns and the
+      2012-2017 bronze publishes no male/female columns, so those demographic rows must carry NULL enrollment_ratio
+      in those years (the grid rows exist; the metric cannot).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE enrollment_ratio IS NOT NULL AND ((year <= 2010 AND demographic
+      IN ('migrant', 'male', 'female')) OR (year BETWEEN 2012 AND 2017 AND demographic IN ('male', 'female')))
+    mustBe: 0
+  - type: sql
+    name: twelve_demographic_rows_per_entity
+    description: 'Structural fact: the unpivot emits all 12 demographic rows for every (year, district_code,
+      school_code) entity (era-gap demographics as NULL-metric rows), so every entity-year group must
+      contain exactly 12 rows. GROUP BY treats NULL geography keys as equal, which matches the entity
+      identity across detail levels.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code FROM {object} GROUP BY year,
+      district_code, school_code HAVING COUNT(*) <> 12) AS bad_entities
+    mustBe: 0
+  - type: sql
+    name: male_female_shares_sum_to_one
+    description: 'Where bronze publishes both sex shares (2011 and 2018+), male + female must sum to 1
+      within the 1pp-per-bucket integer rounding (verified: 0 of 19,921 non-NULL pairs deviate beyond
+      0.03). NULL-guarded — TFS-suppressed and era-gap cells are skipped. The race partition carries no
+      analogous check: six integer-rounded buckets plus real all-zero race rows make no tolerance provable
+      (see the transform docstring).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, MAX(CASE WHEN demographic =
+      'male' THEN enrollment_ratio END) AS m, MAX(CASE WHEN demographic = 'female' THEN enrollment_ratio
+      END) AS f FROM {object} GROUP BY year, district_code, school_code) WHERE m IS NOT NULL AND f IS
+      NOT NULL AND ABS(m + f - 1.0) > 0.03
+    mustBe: 0
+customProperties:
+- property: title
+  value: Enrollment Demographic Shares
+- property: summary
+  value: Each demographic subgroup's share of enrollment by Georgia school, district, and statewide, 2004-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2004-2024
+- property: schema_hash
+  value: 722d179db8baebdb238b7d106216caf5bd9fe11d9f3f9ff1f8f35a5caccb37c3
+- property: available_years
+  value:
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

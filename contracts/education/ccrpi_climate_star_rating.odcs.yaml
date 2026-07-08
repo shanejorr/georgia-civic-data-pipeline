@@ -1,0 +1,236 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.ccrpi_climate_star_rating
+name: ccrpi_climate_star_rating
+version: 2.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia public schools'' School Climate Star Rating (CCRPI) from Georgia Insights / GaDOE:
+    an ordinal 1-5 whole-star rating built from four equally weighted components (climate surveys, student
+    discipline, safe & substance-free environment, school-wide attendance), published 2014-2019 and 2024.
+    School-level only — the source publishes no district or state aggregate rows — with no demographic
+    breakdowns. Years 2020-2023 are absent (Georgia paused CCRPI during COVID). The CCRPI Single Score
+    that GaDOE paired with this rating is not carried here; it lives in the `ccrpi_scoring_by_component`
+    topic.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero).
+tags:
+- education
+- georgia insights
+- ccrpi_climate_star_rating
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/ccrpi_climate_star_rating/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/ccrpi_climate_star_rating/**/*.parquet
+  format: parquet
+schema:
+- name: ccrpi_climate_star_rating
+  logicalType: object
+  physicalType: parquet
+  physicalName: ccrpi_climate_star_rating
+  description: ccrpi_climate_star_rating fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code.
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+  - property: key_metric
+    value: school_climate_star_rating
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/ccrpi_climate_star_rating/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM ccrpi_climate_star_rating WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM ccrpi_climate_star_rating WHERE district_code = '601' AND year = 2024 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: 'Ending calendar year of the school year (e.g., 2018 = 2017-2018). Sourced from the in-file
+      Year / School Year column, not the filename — the 2014 data ships in a file named with its 04.14.15
+      publication date. Coverage: 2014-2019 and 2024 (2020-2023 absent; COVID CCRPI pause).'
+    examples:
+    - 2018
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'GOSA district code (FK to districts dimension): standard 3-digit codes zero-padded;
+      7-digit state-charter / state-school operator codes (e.g., ''7820108'') preserved in full. Non-NULL
+      on every row — this topic is school-level only.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 4-digit GOSA school code, zero-padded (FK to schools dimension; composite key with district_code).
+      The 2024 file ships bare integer codes ('100'), padded to align with prior years ('0100'). Non-NULL
+      on every row.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: school_climate_star_rating
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'School Climate Star Rating, ordinal 1-5 — a diagnostic measure of school climate from
+      four equally weighted (25% each) components: (1) student/teacher/parent climate surveys, (2) student
+      discipline (weighted suspension rate), (3) safe & substance-free learning environment, (4) school-wide
+      attendance. 5 = excellent, 1 = most in need of improvement. Whole stars only — no half-steps in
+      any bronze year (enforced as a quality check) — but stored Float64 for cross-topic consistency with
+      the half-step FESR star ratings, so the API exposes one star-rating type. NOT scaled to 0-1.'
+    examples:
+    - 4.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: School Climate Star Rating
+    - property: short_description
+      value: Overall school climate rating from 1 (most in need of improvement) to 5 (excellent); NULL
+        if not rated.
+    - property: unit
+      value: rating
+    - property: value_min
+      value: 1
+    - property: value_max
+      value: 5
+    - property: null_meaning
+      value: School did not receive a climate rating — a literal `NA` text marker in bronze (typically
+        new schools, special-purpose facilities such as youth detention centers, and very small enrollments);
+        11-60 NULLs per year, every one tracing to an `NA` marker, never a blank cell.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: school_climate_star_rating_within_range
+    description: school_climate_star_rating is within its declared [1, 5] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE school_climate_star_rating IS NOT NULL AND (school_climate_star_rating
+      < 1 OR school_climate_star_rating > 5)
+    mustBe: 0
+  - type: sql
+    name: school_climate_star_rating_whole_star
+    description: 'school_climate_star_rating is a whole star in {1, 2, 3, 4, 5} when present — no half-steps
+      in any bronze year 2014-2019/2024 (verified: 0 violations).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE school_climate_star_rating IS NOT NULL AND school_climate_star_rating
+      NOT IN (1, 2, 3, 4, 5)
+    mustBe: 0
+  - type: sql
+    name: all_rows_school_level
+    description: 'The source publishes school-level rows only: district_code and school_code are non-NULL
+      on every row (no district/state aggregates exist in any bronze file).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL OR school_code IS NULL
+    mustBe: 0
+customProperties:
+- property: title
+  value: CCRPI Climate Star Rating
+- property: summary
+  value: Georgia public schools' 1-5 School Climate Star Rating (a CCRPI component), school-level, 2014-2019
+    and 2024.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2014-2024
+- property: schema_hash
+  value: 6688f79cce941b9180fa824ee3d2cccc4fba2c44eeb61e785b8dbd3549d5879d
+- property: available_years
+  value:
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2024
+- property: year_gaps
+  value:
+  - 2020
+  - 2021
+  - 2022
+  - 2023

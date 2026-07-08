@@ -1,0 +1,318 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.enrollment_march_gender_race_ethnicity
+name: enrollment_march_gender_race_ethnicity
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Georgia Insights (GaDOE) FTE Enrollment by Race/Ethnicity and Gender — the March Cycle 3 FTE
+    headcount of Georgia public school students, cross-classified by gender and by seven mutually exclusive
+    race/ethnicity buckets (Hispanic, American Indian, Asian, Black, Pacific Islander, White, Two or more
+    Races), for every school, district, and the state, fiscal years 2010-2025. This is the spring snapshot;
+    the companion topic enrollment_october_gender_race_ethnicity reports the October Cycle 1 count. Source
+    gender `Total` rows are dropped (redundant with Female + Male).
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- enrollment_march_gender_race_ethnicity
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/enrollment_march_gender_race_ethnicity/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/enrollment_march_gender_race_ethnicity/**/*.parquet
+  format: parquet
+schema:
+- name: enrollment_march_gender_race_ethnicity
+  logicalType: object
+  physicalType: parquet
+  physicalName: enrollment_march_gender_race_ethnicity
+  description: enrollment_march_gender_race_ethnicity fact table, year-partitioned Parquet (split by detail
+    level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, race, gender (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - race
+    - gender
+  - property: key_metric
+    value: num_students
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/enrollment_march_gender_race_ethnicity/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2025), schools detail
+      query: SELECT * FROM enrollment_march_gender_race_ethnicity WHERE year = 2025 LIMIT 100
+    - description: District 601 in 2025
+      query: SELECT * FROM enrollment_march_gender_race_ethnicity WHERE district_code = '601' AND year
+        = 2025 LIMIT 100
+    - description: Filter by race = black
+      query: SELECT * FROM enrollment_march_gender_race_ethnicity WHERE race = 'black' AND year = 2025
+        LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Fiscal year of the March FTE count (2025 = March 2025, i.e. the 2024-2025 school year).
+      Sourced from the bronze filename, cross-checked against each file's preamble.
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state
+      charters. NULL for state-level rows. FK to districts dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code, extracted from the bronze `School ID` (`NNNN-Name`) prefix.
+      NULL for state- and district-level rows. FK to schools dimension (composite key with district_code).
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: race
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Race/ethnicity bucket (canonical race demographic keys, published as `race` because
+      this topic is a race x gender cross-classification). Split Asian/Pacific Islander convention: `asian`
+      and `pacific_islander` are separate buckets, never the combined rollup. `hispanic` is a non-overlapping
+      ethnicity bucket — GaDOE FTE coding gives Hispanic ethnicity precedence over race, so a Hispanic
+      student is counted ONLY under `hispanic` and the seven values partition total enrollment; do not
+      treat `hispanic` as a Hispanic-of-any-race overlay.'
+    examples:
+    - 'black'
+    enum:
+    - 'asian'
+    - 'black'
+    - 'hispanic'
+    - 'multiracial'
+    - 'native_american'
+    - 'pacific_islander'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Race
+    - property: short_description
+      value: One of seven mutually exclusive race/ethnicity buckets; Hispanic is a separate bucket, not
+        a race overlay.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: gender
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Student gender (`female` / `male`). The source's third value, `Total`, equals Female
+      + Male on every fully published cell and is dropped during transform.
+    examples:
+    - 'female'
+    enum:
+    - 'female'
+    - 'male'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Gender
+    - property: short_description
+      value: Student gender, female or male; the source's redundant Total rows are dropped.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: num_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: FTE student headcount for the (year, geography, race, gender) cell. Raw count, not scaled.
+      NULL when suppressed in source; every non-null value is >= 15 (the observed suppression floor across
+      all 32 bronze files). State-level cells are never suppressed.
+    examples:
+    - 309028
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Students
+    - property: short_description
+      value: FTE student headcount for the race x gender cell; NULL means suppressed (small cell), not
+        zero.
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GaDOE (bronze `*` marker) — small cells below the 15-student floor. Suppression
+        is per race/ethnicity cell, not per row.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: race_in_allowed_values
+    description: race is one of the 7 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE race IS NOT NULL AND race NOT IN ('asian', 'black', 'hispanic',
+      'multiracial', 'native_american', 'pacific_islander', 'white')
+    mustBe: 0
+  - type: sql
+    name: gender_in_allowed_values
+    description: gender is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE gender IS NOT NULL AND gender NOT IN ('female', 'male')
+    mustBe: 0
+  - type: sql
+    name: num_students_non_negative
+    description: num_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 0
+    mustBe: 0
+  - type: sql
+    name: num_students_above_suppression_floor
+    description: 'Every non-null num_students is at or above 15 — the observed GaDOE small-cell suppression
+      floor (verified: the minimum non-null value across all 32 bronze files 2010-2025 is exactly 15;
+      smaller cells are suppressed to `*`).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 15
+    mustBe: 0
+  - type: sql
+    name: state_rows_never_suppressed
+    description: 'State-level cells are never suppressed: every (year, race, gender) state row carries
+      a non-null num_students (verified: 0 suppressed state cells across all 32 bronze files).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL AND school_code IS NULL AND num_students
+      IS NULL
+    mustBe: 0
+  - type: sql
+    name: state_race_gender_partition_complete
+    description: 'Every year publishes the complete state-level race x gender cross-classification: exactly
+      14 state rows (7 race/ethnicity buckets x 2 genders) per year, after the duplicate state copies
+      from the District and School files are reduced to one.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE district_code IS NULL AND school_code
+      IS NULL GROUP BY year HAVING COUNT(*) <> 14) AS bad_years
+    mustBe: 0
+customProperties:
+- property: title
+  value: March Enrollment by Race and Gender
+- property: summary
+  value: Public school student headcounts by race/ethnicity and gender from the March FTE count, per school,
+    district, and state, 2010-2025.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2010-2025
+- property: schema_hash
+  value: ed137f9d5a165e37f018c7a89234153a59494127b5d164105adc5cf4ce6628f2
+- property: available_years
+  value:
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

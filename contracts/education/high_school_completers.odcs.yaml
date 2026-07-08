@@ -1,0 +1,471 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.high_school_completers
+name: high_school_completers
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Number of Georgia public high-school completers by credential type (General Education Diplomas,
+    Diplomas with College Prep Endorsements, Diplomas with Vocational Endorsements, Diplomas with Both
+    College Prep and Vocational Endorsements, Special Education Diplomas, Certificates of Attendance)
+    and completer type (graduates vs. other completers), broken out by 9 demographic subgroups (gender,
+    race/ethnicity, and the all-students total), with each demographic's share of the credential's completers.
+    School, district, and state levels, school years 2010-11 through 2023-24, published by GOSA.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: 'Suppressed cells are NULL (not zero): GOSA suppresses small cells, blanking ~65-90% of
+    num_completers values depending on the year (suppression tightened over time), and even some state-level
+    cells (e.g. the phased-out endorsement-diploma credentials in recent years) — school-level analyses
+    should expect sparse coverage, and summing only published subgroup counts undercounts true totals.
+    pct_of_credential_type is a demographic composition share (demographic within credential), not a credential-mix
+    share — do not sum it across credentials. State rows have NULL district_code and school_code; district
+    rows have NULL school_code. The race axis uses the combined asian_pacific_islander bucket — not comparable
+    row-for-row with split-convention topics without aggregating those topics'' asian + pacific_islander
+    rows at query time. year=2011 lacks the general_education_diplomas credential (it did not exist yet).'
+tags:
+- education
+- gosa
+- high_school_completers
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/high_school_completers/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/high_school_completers/**/*.parquet
+  format: parquet
+schema:
+- name: high_school_completers
+  logicalType: object
+  physicalType: parquet
+  physicalName: high_school_completers
+  description: high_school_completers fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic, completer_type,
+    credential_type (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+    - completer_type
+    - credential_type
+  - property: key_metric
+    value: num_completers
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/high_school_completers/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM high_school_completers WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM high_school_completers WHERE district_code = '601' AND year = 2024 LIMIT 100
+    - description: Filter by completer_type = graduates
+      query: SELECT * FROM high_school_completers WHERE completer_type = 'graduates' AND year = 2024 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending (spring) calendar year of the school year (e.g. 2024 for 2023-24), parsed from
+      the source's LONG_SCHOOL_YEAR and cross-checked against the filename.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'GOSA district code (FK to districts dimension): 3-digit zero-padded county/city codes
+      or 7-digit state-charter codes. NULL on state-level rows.'
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). The 2011, 2018, 2019, and 2020 source files mix
+      3- and 4-character codes; the transform normalizes all years to 4 characters. NULL on district-
+      and state-level rows.
+    examples:
+    - '0390'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic subgroup (FK to the global demographics dimension): the all-students total,
+      gender (male, female), and six race/ethnicity buckets. Race uses the combined asian_pacific_islander
+      key (pre-1997 OMB convention): the source publishes a bare ''Asian'' label with no separate Pacific
+      Islander row, and the six race buckets sum exactly to the Total in every fully published group,
+      so Pacific Islanders are folded in, never dropped. ''all'' is the unfiltered total and overlaps
+      every other value; subgroups are mutually exclusive only within their own category (race, gender).'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'multiracial'
+    - 'native_american'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Demographic subgroup: all students, gender, or one of six race/ethnicity buckets (Asian
+        is combined Asian/Pacific Islander).'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: completer_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'High-level completer cohort: ''graduates'' covers the four diploma credentials (general
+      education, college prep, vocational, both); ''other_completers'' covers Special Education Diplomas
+      and Certificates of Attendance (students who did not meet the full diploma course/assessment criteria).
+      Functionally determined by credential_type (each credential belongs to exactly one completer_type;
+      enforced by a quality check). NOT the denominator of pct_of_credential_type — that metric''s denominator
+      is the single credential''s total.'
+    examples:
+    - 'graduates'
+    enum:
+    - 'graduates'
+    - 'other_completers'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Completer Type
+    - property: short_description
+      value: 'High-level cohort: graduates (the four diploma credentials) vs. other_completers (special-ed
+        diplomas and certificates of attendance).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: credential_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Specific credential earned. Six values from 2012 onward; the 2010-11 school year (year=2011)
+      predates 'general_education_diplomas' and carries only the other five. From 2012 onward Georgia
+      phased out endorsement diplomas, so general_education_diplomas dominates Graduates counts in later
+      years.
+    examples:
+    - 'general_education_diplomas'
+    enum:
+    - 'certificates_of_attendance'
+    - 'diplomas_college_prep'
+    - 'diplomas_college_prep_and_vocational'
+    - 'diplomas_vocational'
+    - 'general_education_diplomas'
+    - 'special_education_diplomas'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Credential Type
+    - property: short_description
+      value: 'Specific credential earned: general-education, college-prep, vocational, or both diplomas,
+        special-ed diplomas, or certificates of attendance.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: num_completers
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of completers in this demographic who earned this credential during the school
+      year at this school/district/state. Literal 0 is a real published value (appears only in 2012-2017
+      and 2021-2022); NULL is suppression. In 2023-2024 every published count is >= 10; earlier years
+      publish smaller values.
+    examples:
+    - 114359
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Completers
+    - property: short_description
+      value: Number of completers in this demographic who earned this credential during the school year;
+        NULL means GOSA suppressed a small cell, not zero.
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (small cell). Blank cells in the 2011-2021 sources and/or 'TFS' (Too Few
+        Students) literals in 2011, 2018-2020, and 2022-2024 — all become NULL.
+    - property: key_metric
+      value: true
+  - name: pct_of_credential_type
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Share of the credential''s completers who belong to this demographic — a demographic-within-credential
+      share on the 0-1 scale (source publishes 0-100 with one decimal; divided by 100). The denominator
+      is the credential''s own demographic=''all'' total at the same geography, NOT the completer_type
+      cohort total: rows with demographic=''all'' are always exactly 1.0 where published, gender pairs
+      sum to ~1, and the six race buckets sum to ~1 within a credential (all pinned as quality checks).
+      Credentials do NOT sum to 1 within a completer_type.'
+    examples:
+    - 0.488
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent of Credential Type
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GOSA. In 2011, 2018-2020, and 2023-2024 the source publishes this share for
+        some rows whose num_completers is suppressed, so it can be non-NULL while num_completers is NULL
+        — never the reverse.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 9 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'female', 'hispanic', 'male', 'multiracial', 'native_american',
+      'white')
+    mustBe: 0
+  - type: sql
+    name: completer_type_in_allowed_values
+    description: completer_type is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE completer_type IS NOT NULL AND completer_type NOT IN ('graduates',
+      'other_completers')
+    mustBe: 0
+  - type: sql
+    name: credential_type_in_allowed_values
+    description: credential_type is one of the 6 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE credential_type IS NOT NULL AND credential_type NOT IN
+      ('certificates_of_attendance', 'diplomas_college_prep', 'diplomas_college_prep_and_vocational',
+      'diplomas_vocational', 'general_education_diplomas', 'special_education_diplomas')
+    mustBe: 0
+  - type: sql
+    name: num_completers_non_negative
+    description: num_completers is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_completers IS NOT NULL AND num_completers < 0
+    mustBe: 0
+  - type: sql
+    name: pct_of_credential_type_within_unit_interval
+    description: pct_of_credential_type is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_of_credential_type IS NOT NULL AND (pct_of_credential_type
+      < 0 OR pct_of_credential_type > 1)
+    mustBe: 0
+  - type: sql
+    name: credential_type_determines_completer_type
+    description: 'Functional dependency: each credential_type maps to exactly one completer_type (graduates
+      = the four diploma credentials; other_completers = Special Education Diplomas + Certificates of
+      Attendance). Independent enum checks on the two columns would otherwise allow an invalid pairing.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT credential_type FROM {object} GROUP BY credential_type HAVING
+      COUNT(DISTINCT completer_type) > 1)
+    mustBe: 0
+  - type: sql
+    name: count_present_implies_pct_present
+    description: 'In every bronze year a published num_completers comes with a published pct_of_credential_type
+      (verified: 0 violations across all 14 files); the reverse does not hold (percent survives count
+      suppression in 2011, 2018-2020, 2023-2024).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_completers IS NOT NULL AND pct_of_credential_type IS
+      NULL
+    mustBe: 0
+  - type: sql
+    name: all_demographic_share_is_one
+    description: 'pct_of_credential_type is the demographic''s share of the credential''s total, so demographic=''all''
+      rows are exactly 100%% (1.0) wherever published — the source publishes them as the literal 100 (verified:
+      0 violations across all 14 files).'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE demographic = 'all' AND pct_of_credential_type IS NOT NULL
+      AND ABS(pct_of_credential_type - 1.0) > 1e-9
+    mustBe: 0
+  - type: sql
+    name: gender_count_partition_exact
+    description: 'male + female num_completers equals the ''all'' total exactly in every group where all
+      three are published (verified: 11,214 complete groups across all years, 0 violations). Pivot with
+      conditional aggregation — GROUP BY treats NULL geography keys as equal, scoping each detail level
+      correctly.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, completer_type, credential_type,
+      MAX(CASE WHEN demographic = 'male' THEN num_completers END) AS m, MAX(CASE WHEN demographic = 'female'
+      THEN num_completers END) AS f, MAX(CASE WHEN demographic = 'all' THEN num_completers END) AS t FROM
+      {object} GROUP BY year, district_code, school_code, completer_type, credential_type) WHERE m IS
+      NOT NULL AND f IS NOT NULL AND t IS NOT NULL AND m + f <> t
+    mustBe: 0
+  - type: sql
+    name: race_count_partition_exact
+    description: 'The six race buckets partition each credential''s completers: their num_completers values
+      sum exactly to the ''all'' total in every group where all six and the total are published (verified:
+      6,369 complete groups across all years, 0 violations — the §5b math test proving the combined Asian/Pacific
+      Islander convention).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, completer_type, credential_type,
+      SUM(CASE WHEN demographic IN ('asian_pacific_islander', 'black', 'hispanic', 'multiracial', 'native_american',
+      'white') THEN num_completers END) AS race_sum, COUNT(CASE WHEN demographic IN ('asian_pacific_islander',
+      'black', 'hispanic', 'multiracial', 'native_american', 'white') AND num_completers IS NOT NULL THEN
+      1 END) AS race_nn, MAX(CASE WHEN demographic = 'all' THEN num_completers END) AS t FROM {object}
+      GROUP BY year, district_code, school_code, completer_type, credential_type) WHERE race_nn = 6 AND
+      t IS NOT NULL AND race_sum <> t
+    mustBe: 0
+  - type: sql
+    name: gender_pct_partition_sums_to_one
+    description: male + female pct_of_credential_type sums to 1.0 within rounding (source rounds each
+      share to one decimal on the 0-100 scale, so the pair can be off by up to 0.001; observed max deviation
+      is exactly 0.001 across all years) in every group where both are published.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, completer_type, credential_type,
+      MAX(CASE WHEN demographic = 'male' THEN pct_of_credential_type END) AS m, MAX(CASE WHEN demographic
+      = 'female' THEN pct_of_credential_type END) AS f FROM {object} GROUP BY year, district_code, school_code,
+      completer_type, credential_type) WHERE m IS NOT NULL AND f IS NOT NULL AND ABS(m + f - 1.0) > 0.002
+    mustBe: 0
+  - type: sql
+    name: race_pct_partition_sums_to_one
+    description: The six race buckets' pct_of_credential_type values sum to 1.0 within rounding (six one-decimal
+      roundings on the 0-100 scale allow up to 0.003 deviation; observed max is 0.002 across all years)
+      in every group where all six are published.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, completer_type, credential_type,
+      SUM(CASE WHEN demographic IN ('asian_pacific_islander', 'black', 'hispanic', 'multiracial', 'native_american',
+      'white') THEN pct_of_credential_type END) AS race_sum, COUNT(CASE WHEN demographic IN ('asian_pacific_islander',
+      'black', 'hispanic', 'multiracial', 'native_american', 'white') AND pct_of_credential_type IS NOT
+      NULL THEN 1 END) AS race_nn FROM {object} GROUP BY year, district_code, school_code, completer_type,
+      credential_type) WHERE race_nn = 6 AND ABS(race_sum - 1.0) > 0.004
+    mustBe: 0
+customProperties:
+- property: title
+  value: High School Completers
+- property: summary
+  value: Counts of Georgia high school completers by diploma or certificate type, by school, district,
+    and state and demographic subgroup, 2011-2024.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2011-2024
+- property: schema_hash
+  value: eaad9877ebafbad56cb0001268d4a0ef14cea222bcc9270c439aae86f6ecc975
+- property: available_years
+  value:
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

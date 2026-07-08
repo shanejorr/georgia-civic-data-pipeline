@@ -1,0 +1,462 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.juvenile_population
+name: juvenile_population
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'County-level population denominators for Georgia, 1990-2024, from OJJDP''s Easy Access to
+    Juvenile Populations (EZAPOP; NCJJ tabulations of Census Bureau / NCHS bridged-race county population
+    estimates): juveniles (ages 0-17) per county per year — the base counts for turning juvenile-justice
+    counts into rates — split by sex, bridged race, Hispanic ethnicity, and single year of age (so any
+    age band can be rebuilt, e.g. ages 10-16 for Georgia''s delinquency jurisdiction), plus total resident
+    population (all ages) for context.'
+  usage: 'Cite: Puzzanchera, C., Sladky, A. and Kang, W. (2026). Easy Access to Juvenile Populations:
+    1990-2024. This is a DENOMINATOR dataset: join on year + county_fips (+ demographic) to turn juvenile-justice
+    counts into rates. Use age_group = ''00_17'' for juvenile rates; sum single ages 10-16 for Georgia
+    delinquency-jurisdiction rates; use ''all_ages'' for whole-population rates. Filter demographic to
+    one axis at a time and never sum overlapping age_group values.'
+  limitations: State rows have NULL county_fips and equal the county sum exactly. Values are model-based
+    Census/NCHS bridged-race estimates of the current vintage, not enumerated counts — historical values
+    are revised between vintages. Race buckets are bridged race (include both ethnicities; no multiracial
+    bucket; Asian includes Pacific Islanders), so they are not directly comparable to sources with Hispanic-exclusive
+    race buckets or post-1997 OMB race schemes. Sex, race, and ethnicity splits exist only for the juvenile
+    total (age_group '00_17'); single ages and all_ages exist only for demographic 'all' — the source
+    publishes one-way marginals, never cross-tabulations. The ethnicity split is served as the hispanic_population
+    / not_hispanic_population columns, NULL outside the juvenile-total rows (structural, not suppression).
+tags:
+- criminal_justice
+- ojjdp statistical briefing book — easy access to juvenile populations
+- juvenile_population
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/juvenile_population/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/juvenile_population/**/*.parquet
+  format: parquet
+schema:
+- name: juvenile_population
+  logicalType: object
+  physicalType: parquet
+  physicalName: juvenile_population
+  description: juvenile_population fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, demographic, age_group (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: ojjdp
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+    - age_group
+  - property: key_metric
+    value: population
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/juvenile_population/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), counties detail
+      query: SELECT * FROM juvenile_population WHERE year = 2024 LIMIT 100
+    - description: Filter by age_group = 00_17
+      query: SELECT * FROM juvenile_population WHERE age_group = '00_17' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year of the population estimate.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the Georgia county; FK to the counties
+      dimension. NULL on state-level rows (the source's 'All Counties' aggregate, which equals the sum
+      of the 159 county rows exactly).
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic slice. Two overlapping axes plus the total are packed into this column:
+      ''all'', sex (female/male), and bridged race (asian_pacific_islander/black/native_american/white)
+      — filter to one axis; summing across axes double-counts. Sex and race splits are published for the
+      juvenile total only, so non-''all'' values appear only where age_group = ''00_17''. Race is NCHS
+      bridged race: each bucket includes persons of both Hispanic and non-Hispanic ethnicity (ethnicity
+      is served separately in hispanic_population / not_hispanic_population), there is no multiracial
+      bucket (multiracial persons are allocated into the four single-race buckets), and the source''s
+      ''Asian'' bucket is the pre-1997 OMB combined Asian + Pacific Islander bucket (the four race buckets
+      sum exactly to the juvenile total), hence asian_pacific_islander. NOTE: this race classification
+      differs from sources with Hispanic-exclusive race buckets (e.g. the decision_points topic) — when
+      computing race-specific rates against such sources, document the mismatch.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'female'
+    - 'male'
+    - 'native_american'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Population group the row covers: all juveniles, one sex group, or one race group.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: age_group
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Age slice of the row. '00_17' is the juvenile total (ages 0-17) — the headline denominator;
+      '00'..'17' are single years of age (published for demographic = 'all' only), which sum exactly to
+      '00_17' and let consumers build any age band — e.g. ages 10-16, Georgia's delinquency-jurisdiction
+      population (upper age 16); 'all_ages' is the total resident population including adults (context/denominator
+      for county-level rates, demographic = 'all' only). Never sum across age_group values that overlap
+      ('00_17' and 'all_ages' contain the single ages).
+    examples:
+    - '00_17'
+    enum:
+    - '00'
+    - '00_17'
+    - '01'
+    - '02'
+    - '03'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    - '09'
+    - '10'
+    - '11'
+    - '12'
+    - '13'
+    - '14'
+    - '15'
+    - '16'
+    - '17'
+    - 'all_ages'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Age Group
+    - property: short_description
+      value: 'Age slice: all juveniles (00_17), a single year of age (00-17), or the total resident population
+        (all_ages).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: population
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Estimated resident population of the cell (Census Bureau / NCHS bridged-race county estimates
+      as tabulated by NCJJ). Never NULL — the source has full coverage of all 159 counties in every year
+      with no suppression; zeros are real (small counties can have zero juveniles in a race bucket). Estimates
+      are the current vintage (published 2026) and are revised between vintages.
+    examples:
+    - 16130
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Population
+    - property: short_description
+      value: Estimated residents in the county, year, demographic group, and age slice.
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: hispanic_population
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Estimated Hispanic (any race) juveniles ages 0-17 — an ethnicity partition of the row''s
+      population, populated only where demographic = ''all'' and age_group = ''00_17''. Served as a column
+      rather than a demographic row because bridged-race buckets include Hispanic persons: a hispanic
+      row would double-count against the race rows when summing the race axis. hispanic_population + not_hispanic_population
+      = population on every populated row.'
+    examples:
+    - 4056
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Hispanic Population
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: The ethnicity split is published only for the juvenile total (demographic = 'all', age_group
+        = '00_17'); NULL on every other row is structural, not suppression.
+  - name: not_hispanic_population
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Estimated non-Hispanic (any race) juveniles ages 0-17 — the complement of hispanic_population,
+      populated only where demographic = 'all' and age_group = '00_17'.
+    examples:
+    - 12074
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Not Hispanic Population
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: The ethnicity split is published only for the juvenile total (demographic = 'all', age_group
+        = '00_17'); NULL on every other row is structural, not suppression.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 7 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'female', 'male', 'native_american', 'white')
+    mustBe: 0
+  - type: sql
+    name: age_group_in_allowed_values
+    description: age_group is one of the 20 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE age_group IS NOT NULL AND age_group NOT IN ('00', '00_17',
+      '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', '13', '14', '15', '16',
+      '17', 'all_ages')
+    mustBe: 0
+  - type: sql
+    name: population_non_negative
+    description: population is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE population IS NOT NULL AND population < 0
+    mustBe: 0
+  - type: sql
+    name: hispanic_population_non_negative
+    description: hispanic_population is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE hispanic_population IS NOT NULL AND hispanic_population
+      < 0
+    mustBe: 0
+  - type: sql
+    name: not_hispanic_population_non_negative
+    description: not_hispanic_population is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE not_hispanic_population IS NOT NULL AND not_hispanic_population
+      < 0
+    mustBe: 0
+  - type: sql
+    name: population_never_null
+    description: The source has full coverage with no suppression; a NULL population would mean a parse
+      or join regression.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE population IS NULL
+    mustBe: 0
+  - type: sql
+    name: sex_partition_of_juvenile_total
+    description: male + female must equal the 'all' juvenile total per (year, county_fips) at age_group
+      '00_17' (verified exact in bronze). GROUP BY treats the NULL county_fips of state rows as one group,
+      enforcing both levels.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN demographic = 'all' THEN population
+      END) AS total, SUM(CASE WHEN demographic IN ('female','male') THEN population END) AS sex_sum FROM
+      {object} WHERE age_group = '00_17' GROUP BY year, county_fips) WHERE total IS NOT NULL AND sex_sum
+      IS NOT NULL AND total != sex_sum
+    mustBe: 0
+  - type: sql
+    name: race_partition_of_juvenile_total
+    description: The four bridged-race buckets must sum exactly to the 'all' juvenile total per (year,
+      county_fips) — the structural fact that also proves 'Asian' is the combined Asian/Pacific Islander
+      bucket and that multiracial persons are allocated into the four buckets.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN demographic = 'all' THEN population
+      END) AS total, SUM(CASE WHEN demographic IN ('asian_pacific_islander','black','native_american','white')
+      THEN population END) AS race_sum FROM {object} WHERE age_group = '00_17' GROUP BY year, county_fips)
+      WHERE total IS NOT NULL AND race_sum IS NOT NULL AND total != race_sum
+    mustBe: 0
+  - type: sql
+    name: ethnicity_partition_of_juvenile_total
+    description: hispanic_population + not_hispanic_population must equal population on every row where
+      the split is published (verified exact in bronze).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE hispanic_population IS NOT NULL AND not_hispanic_population
+      IS NOT NULL AND population IS NOT NULL AND hispanic_population + not_hispanic_population != population
+    mustBe: 0
+  - type: sql
+    name: single_ages_sum_to_juvenile_total
+    description: The 18 single-year-of-age rows must sum exactly to the '00_17' juvenile total per (year,
+      county_fips) at demographic 'all' (verified exact in bronze) — the guarantee that lets consumers
+      build any age band.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN age_group = '00_17' THEN population
+      END) AS total, SUM(CASE WHEN age_group IN ('00','01','02','03','04','05','06','07','08','09','10','11','12','13','14','15','16','17')
+      THEN population END) AS age_sum FROM {object} WHERE demographic = 'all' GROUP BY year, county_fips)
+      WHERE total IS NOT NULL AND age_sum IS NOT NULL AND total != age_sum
+    mustBe: 0
+  - type: sql
+    name: state_row_equals_county_sum
+    description: The source's 'All Counties' statewide row equals the sum of the 159 county rows exactly
+      in every file (verified in bronze); preserved per (year, demographic, age_group).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, demographic, age_group, SUM(CASE WHEN county_fips IS NULL
+      THEN population END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN population END)
+      AS county_sum FROM {object} GROUP BY year, demographic, age_group) WHERE state_total IS NOT NULL
+      AND county_sum IS NOT NULL AND state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: juveniles_within_total_population
+    description: The juvenile (0-17) population cannot exceed the total resident population of the same
+      county and year.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN age_group = 'all_ages' THEN population
+      END) AS everyone, MAX(CASE WHEN age_group = '00_17' THEN population END) AS juveniles FROM {object}
+      WHERE demographic = 'all' GROUP BY year, county_fips) WHERE everyone IS NOT NULL AND juveniles IS
+      NOT NULL AND juveniles > everyone
+    mustBe: 0
+  - type: sql
+    name: ethnicity_columns_structural_nulls
+    description: The ethnicity partition columns are populated on exactly the juvenile-total rows (demographic
+      'all', age_group '00_17') and NULL everywhere else — the source publishes the split only for that
+      slice.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (demographic = 'all' AND age_group = '00_17' AND (hispanic_population
+      IS NULL OR not_hispanic_population IS NULL)) OR ((demographic != 'all' OR age_group != '00_17')
+      AND (hispanic_population IS NOT NULL OR not_hispanic_population IS NOT NULL))
+    mustBe: 0
+  - type: sql
+    name: demographic_splits_only_for_juvenile_total
+    description: Sex and race marginals are published for the juvenile total only — a non-'all' demographic
+      on any other age_group would mean a slice-routing bug (the source has no such cross-tabs).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE demographic != 'all' AND age_group != '00_17'
+    mustBe: 0
+customProperties:
+- property: title
+  value: Juvenile Population Estimates
+- property: summary
+  value: Georgia county juvenile (ages 0-17) population estimates by sex, race, ethnicity, and single
+    year of age, 1990-2024 — rate denominators for juvenile-justice data.
+- property: source
+  value: OJJDP Statistical Briefing Book — Easy Access to Juvenile Populations
+- property: source_url
+  value: https://www.ojjdp.gov/ojstatbb/ezapop/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 1990-2024
+- property: schema_hash
+  value: 629af9781d613887eda60bbcdb8475c5908de80f14f72718d304f03f73fef767
+- property: available_years
+  value:
+  - 1990
+  - 1991
+  - 1992
+  - 1993
+  - 1994
+  - 1995
+  - 1996
+  - 1997
+  - 1998
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

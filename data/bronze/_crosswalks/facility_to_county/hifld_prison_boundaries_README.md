@@ -1,0 +1,74 @@
+# PrisonBndrys
+
+
+## Vector Tile Service
+
+TileJSON: https://api.geodesic.seerai.space/vertex/api/v1/share/QskmJVkkQy2VS2zcfZAzhw/vector/prison-boundaries-prisonbndrys.json
+Vector Tiles: https://api.geodesic.seerai.space/vertex/api/v1/share/QskmJVkkQy2VS2zcfZAzhw/collections/prison-boundaries-prisonbndrys/tiles/WebMercatorQuad/{z}/{y}/{x}.mvt
+
+## Description
+<DIV STYLE="text-align:Left;"><DIV><P><SPAN>The prison boundary feature class contains secure detention facilities. These facilities range in jurisdiction from federal(excluding military) to local governments. Polygon geometry is used to describe the extent of where the incarcerated population is located (fence lines or building footprints). This feature class's attribution describes many physical and social characteristics of detention facilities in the United States and some of its territories. The attribution for this feature class was populated by open source search methodologies of authoritative sources. Changes from the previous version include 80 records added, 132 closed, 30 reopened, and 363 removed.</SPAN></P></DIV></DIV>
+
+
+
+## Schema
+```
+root
+ |-- ADDRESS: string (nullable = true)
+ |-- CAPACITY: double (nullable = true)
+ |-- CITY: string (nullable = true)
+ |-- COUNTRY: string (nullable = true)
+ |-- COUNTY: string (nullable = true)
+ |-- COUNTYFIPS: string (nullable = true)
+ |-- FACILITYID: string (nullable = true)
+ |-- NAICS_CODE: string (nullable = true)
+ |-- NAICS_DESC: string (nullable = true)
+ |-- NAME: string (nullable = true)
+ |-- OBJECTID: integer (nullable = true)
+ |-- POPULATION: double (nullable = true)
+ |-- SECURELVL: string (nullable = true)
+ |-- SOURCE: string (nullable = true)
+ |-- SOURCEDATE: integer (nullable = true)
+ |-- STATE: string (nullable = true)
+ |-- STATUS: string (nullable = true)
+ |-- Shape__Area: double (nullable = true)
+ |-- Shape__Length: double (nullable = true)
+ |-- TELEPHONE: string (nullable = true)
+ |-- TYPE: string (nullable = true)
+ |-- VAL_DATE: integer (nullable = true)
+ |-- VAL_METHOD: string (nullable = true)
+ |-- WEBSITE: string (nullable = true)
+ |-- ZIP: string (nullable = true)
+ |-- ZIP4: string (nullable = true)
+ |-- geometry: geometry (nullable = true)
+ |-- bbox: struct (nullable = false)
+ |    |-- xmin: double (nullable = true)
+ |    |-- ymin: double (nullable = true)
+ |    |-- xmax: double (nullable = true)
+ |    |-- ymax: double (nullable = true)
+
+```
+
+
+## Descriptive Statistics
+| Statistic | ADDRESS | CAPACITY | CITY | COUNTRY | COUNTY | COUNTYFIPS | FACILITYID | NAICS_CODE | NAICS_DESC | NAME | OBJECTID | POPULATION | SECURELVL | SOURCE | SOURCEDATE | STATE | STATUS | Shape__Area | Shape__Length | TELEPHONE | TYPE | VAL_DATE | VAL_METHOD | WEBSITE | ZIP | ZIP4 |
+|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|-----------|
+| count | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 | 6468 |
+| mean | N/A | -158.33580705009277 | N/A | N/A | N/A | 29288.856988249845 | 1.0120980522418058E7 | 922140.0 | N/A | N/A | 3234.5 | -487.92408781694496 | N/A | N/A | 1343721.0439084724 | N/A | N/A | 3.620767516471557E-6 | 0.006526204918430966 | N/A | N/A | 1.2531147438466296E7 | N/A | N/A | 53199.48546691404 | -609.7968460111317 |
+| stddev | N/A | 876.6863211076736 | N/A | N/A | N/A | 16303.361273191282 | 1077355.8436311646 | 0.0 | N/A | N/A | 1867.2951025480677 | 745.7284341080978 | N/A | N/A | 1.2035607867293174E9 | N/A | N/A | 7.500556177177352E-6 | 0.0064290493802968696 | N/A | N/A | 1.2533721670437334E9 | N/A | N/A | 26354.43544216873 | 1578.1052929417936 |
+| min | 0244 COUNTY ROAD 333A | -999.0 | ABBEVILLE | GUM | ABBEVILLE | 01001 | 10000001 | 922140 | CORRECTIONAL INSTITUTIONS | 145TH STREET DEPARTMENT OF JUVENILE JUSTICE | 1 | -999.0 | CLOSE | NOT AVAILABLE | -2146813952 | AK | CLOSED | 7.88691068009939E-9 | 3.589658721544003E-4 | (201) 336-3500 | COUNTY | -2132983808 | IMAGERY | NOT AVAILABLE | 00603 | -999 |
+| max | YAPHANK AVE | 10000.0 | ZEPHYRHILLS | VIR | ZAVALA | 78010 | 20000903 | 922140 | CORRECTIONAL INSTITUTIONS | ZONA TRUISTICA AREA CAROLINA | 6468 | 4983.0 | NOT AVAILABLE | https://youthcenter.douglascounty-ne.gov/ | 2147409920 | WY | OPEN | 1.6132708378790994E-4 | 0.08927200744653793 | NOT AVAILABLE | STATE | 2147409920 | UNVERIFIED | https://youthcenter.douglascounty-ne.gov/ | 99929 | 9998 |
+
+
+
+## Processing Information
+- If dataset included geometry, dataset was spatially sorted using geohash level 8, which was then removed from dataset
+- **Output Format**: GeoParquet
+- **Compression**: ZSTD
+
+
+## File Information
+- **README Created**: 2025-08-23
+- **Generated on**: 2025-08-23 01:28:18
+- **Generated by**: Automated processing pipeline using SeerAI Boson, Databricks, and Apache Sedona
+- **Generated by version**: 3.3.2

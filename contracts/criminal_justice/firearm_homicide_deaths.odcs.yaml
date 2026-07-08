@@ -1,0 +1,461 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.firearm_homicide_deaths
+name: firearm_homicide_deaths
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Deaths and death rates per 100,000 residents for Georgia counties by year and cause category,
+    from official death certificates (CDC WONDER Multiple Cause of Death, NCHS/NVSS), 1999 onward. Four
+    OVERLAPPING cause categories are served: all firearm deaths (any intent, including suicide), homicide
+    (any mechanism), firearm homicide (the intersection of the first two), and legal intervention. A firearm
+    homicide is counted in ALL THREE of the first categories, so deaths must NEVER be summed across cause_category
+    values — always filter to a single category. Deaths are attributed to the decedent''s county of residence.
+    County-year death counts of 1-9 are suppressed at source (NULL); a 0 is a true zero. Two source vintages
+    are stitched without overlap: bridged-race (1999-2017) and single-race (2018 onward), flagged by dataset_vintage;
+    counts are verified identical across vintages in the overlap years, but rate availability differs
+    (see column descriptions).'
+  usage: 'Cite: Centers for Disease Control and Prevention, National Center for Health Statistics, Multiple
+    Cause of Death data on CDC WONDER (wonder.cdc.gov). ALWAYS filter to a single cause_category — the
+    categories overlap (a firearm homicide is also a firearm death and a homicide) and summing across
+    them double-counts. Do not sum county deaths into a state total: suppressed county-years (counts of
+    1-9) are missing, so the sum understates the true total. Use crude_rate_per_100k for the full time
+    series; age_adjusted_rate_per_100k (1999-2017 only) for cross-county comparisons in those years. Compare
+    rate coverage across the 2017/2018 dataset_vintage boundary with care.'
+  limitations: 'County-year death counts of 1-9 are suppressed at source (NULL, never zero) — 61-68% of
+    county-years for the firearm and homicide categories — so small-county coverage is sparse and county
+    sums understate state totals (no state rows are served; WONDER withholds them for these queries).
+    Cause categories overlap and are not additive. Two source vintages are stitched at 2017/2018 (dataset_vintage):
+    death counts are verified identical in the source overlap, but rate conventions differ — through 2017
+    rates from fewer than 20 deaths (including zero-death rows) are masked ''Unreliable'' (NULL), while
+    from 2018 rates are published for every unsuppressed count; the age-adjusted rate is unavailable from
+    2018 at county grain. The source''s crude-rate 95% confidence-interval bounds (published 2018 onward)
+    are not served. Deaths are counted by county of residence, not occurrence. 2024 populations are Vintage
+    2024 postcensal estimates and recent years may be revised.'
+tags:
+- criminal_justice
+- cdc wonder, multiple cause of death
+- firearm_homicide_deaths
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/firearm_homicide_deaths/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/firearm_homicide_deaths/**/*.parquet
+  format: parquet
+schema:
+- name: firearm_homicide_deaths
+  logicalType: object
+  physicalType: parquet
+  physicalName: firearm_homicide_deaths
+  description: firearm_homicide_deaths fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, county_fips, cause_category, dataset_vintage.
+  customProperties:
+  - property: sub_topic
+    value: cdc
+  - property: detail_levels
+    value:
+    - counties
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - cause_category
+    - dataset_vintage
+  - property: key_metric
+    value: crude_rate_per_100k
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/firearm_homicide_deaths/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), counties detail
+      query: SELECT * FROM firearm_homicide_deaths WHERE year = 2024 LIMIT 100
+    - description: Filter by cause_category = firearm_homicide
+      query: SELECT * FROM firearm_homicide_deaths WHERE cause_category = 'firearm_homicide' AND year
+        = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year of death (year the death occurred, not the publication year).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 5-digit county FIPS code (state prefix 13) of the decedent's county of residence; FK
+      to the counties dimension. Never NULL — this topic has no statewide rows (CDC WONDER withholds state
+      totals for these queries due to suppression constraints, and a state total cannot be recomputed
+      from county rows because suppressed cells are missing).
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: cause_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Cause-of-death category (ICD-10 injury intent/mechanism recodes of the underlying cause).
+      THE CATEGORIES OVERLAP AND ARE NOT ADDITIVE: firearm_deaths = all firearm deaths of any intent (homicide
+      + suicide + unintentional + legal intervention + undetermined); homicide = homicides by any mechanism;
+      firearm_homicide = homicide intent AND firearm mechanism, a subset of BOTH of the first two; legal_intervention
+      = deaths caused by law enforcement acting in the line of duty (any mechanism, mostly firearm). Summing
+      deaths across cause_category values double-counts — always filter to ONE category.'
+    examples:
+    - 'firearm_homicide'
+    enum:
+    - 'firearm_deaths'
+    - 'firearm_homicide'
+    - 'homicide'
+    - 'legal_intervention'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Cause Category
+    - property: short_description
+      value: Cause-of-death category — categories OVERLAP (a firearm homicide is also a firearm death
+        AND a homicide); never sum across categories.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: dataset_vintage
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'CDC WONDER dataset vintage serving the row — a methodology flag, not an extra grain
+      axis: each year is served by exactly ONE vintage. bridged_race = Multiple Cause of Death 1999-2020
+      with bridged-race population denominators (serves 1999-2017 here); single_race = Multiple Cause
+      of Death 2018-present with single-race denominators (serves 2018 onward). The vintages overlap 2018-2020
+      at source; death counts and populations are verified identical there, and the single-race vintage
+      is served because it publishes crude rates for all unsuppressed counts (the bridged-race vintage
+      masks rates from fewer than 20 deaths as ''Unreliable''). Consequence: crude-rate coverage and zero-death
+      rate conventions change at the 2017/2018 boundary, and the age-adjusted rate ends at 2017.'
+    examples:
+    - 'single_race'
+    enum:
+    - 'bridged_race'
+    - 'single_race'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Dataset Vintage
+    - property: short_description
+      value: 'Source methodology vintage: bridged_race serves 1999-2017, single_race serves 2018 onward
+        (never blended).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: deaths
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Count of resident deaths in the cause category. Suppressed at source (NULL) when the
+      true count is 1-9; a published 0 is a true zero. 61-68% of county-years are suppressed for the firearm/homicide
+      categories — expected for rare events at county grain. Numerator of crude_rate_per_100k. NOT additive
+      across cause_category values (see cause_category).
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Deaths
+    - property: short_description
+      value: Resident deaths in the cause category (NULL = suppressed count of 1-9; 0 is a true zero).
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'NULL = suppressed at source: the true count is 1-9 (CDC privacy rule for sub-national death
+        counts).'
+    - property: metric_component
+      value: numerator
+  - name: population
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: County resident population for the year — the denominator of the death rates. Never suppressed.
+      Bridged-race postcensal/intercensal estimates through 2017; single-race estimates from 2018 (2024
+      uses Vintage 2024 postcensal estimates). Identical across the four cause categories for a county-year.
+    examples:
+    - 28877
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Population
+    - property: short_description
+      value: County resident population (rate denominator; never suppressed).
+    - property: unit
+      value: count
+    - property: metric_component
+      value: denominator
+  - name: crude_rate_per_100k
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Crude death rate per 100,000 residents (source-computed; equals deaths / population x
+      100,000). NOT on the platform's 0-1 rate scale — the natural unit is deaths per 100,000. NULL whenever
+      deaths is suppressed. Additionally, on bridged_race rows (1999-2017) WONDER masks rates computed
+      from fewer than 20 deaths as 'Unreliable' (NULL here, count preserved), including all zero-death
+      rows; on single_race rows (2018 onward) rates are published for every unsuppressed count and zero-death
+      rows carry a true 0.0. Rate coverage therefore improves sharply from 2018.
+    examples:
+    - 17.6
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Crude Rate per 100k
+    - property: short_description
+      value: Crude death rate per 100,000 residents (NULL when the count is suppressed; through 2017 also
+        when based on fewer than 20 deaths).
+    - property: null_meaning
+      value: 'NULL = masked at source: the death count is suppressed (1-9), or — 1999-2017 rows only —
+        the rate is based on fewer than 20 deaths and flagged ''Unreliable''.'
+    - property: key_metric
+      value: true
+  - name: age_adjusted_rate_per_100k
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Age-adjusted death rate per 100,000 residents (source-computed, standardized to the
+      2000 US standard population) — preferable to the crude rate when comparing counties with different
+      age structures. NOT on the platform''s 0-1 rate scale. Published on bridged_race rows (1999-2017)
+      only: CDC WONDER does not permit age-adjusted rates at county grain in the single-race vintage,
+      so every row from 2018 onward is NULL. On 1999-2017 rows it shares the crude rate''s masking (NULL
+      when the count is suppressed or the rate is based on fewer than 20 deaths).'
+    examples:
+    - 15.8
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Age Adjusted Rate per 100k
+    - property: short_description
+      value: Age-adjusted death rate per 100,000 (2000 US standard population); published 1999-2017 only.
+    - property: null_meaning
+      value: NULL on all rows from 2018 onward (not published at county grain in the single-race vintage);
+        on 1999-2017 rows, NULL = suppressed count (1-9) or rate based on fewer than 20 deaths ('Unreliable').
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: cause_category_in_allowed_values
+    description: cause_category is one of the 4 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE cause_category IS NOT NULL AND cause_category NOT IN ('firearm_deaths',
+      'firearm_homicide', 'homicide', 'legal_intervention')
+    mustBe: 0
+  - type: sql
+    name: dataset_vintage_in_allowed_values
+    description: dataset_vintage is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE dataset_vintage IS NOT NULL AND dataset_vintage NOT IN
+      ('bridged_race', 'single_race')
+    mustBe: 0
+  - type: sql
+    name: deaths_non_negative
+    description: deaths is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE deaths IS NOT NULL AND deaths < 0
+    mustBe: 0
+  - type: sql
+    name: population_non_negative
+    description: population is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE population IS NOT NULL AND population < 0
+    mustBe: 0
+  - type: sql
+    name: crude_rate_per_100k_non_negative
+    description: Rates cannot be negative. (Authored because per-100k rates carry no unit marker.)
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE crude_rate_per_100k IS NOT NULL AND crude_rate_per_100k
+      < 0
+    mustBe: 0
+  - type: sql
+    name: age_adjusted_rate_per_100k_non_negative
+    description: Rates cannot be negative. (Authored because per-100k rates carry no unit marker.)
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE age_adjusted_rate_per_100k IS NOT NULL AND age_adjusted_rate_per_100k
+      < 0
+    mustBe: 0
+  - type: sql
+    name: suppressed_deaths_implies_null_rates
+    description: WONDER suppresses the rates whenever the death count is suppressed — a NULL deaths cell
+      can never carry a published rate.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE deaths IS NULL AND (crude_rate_per_100k IS NOT NULL OR
+      age_adjusted_rate_per_100k IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: bridged_race_rates_require_20_deaths
+    description: In the bridged-race vintage (1999-2017) WONDER masks rates computed from fewer than 20
+      deaths as 'Unreliable' — a published rate on such a row means the marker handling broke.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE dataset_vintage = 'bridged_race' AND deaths IS NOT NULL
+      AND deaths < 20 AND (crude_rate_per_100k IS NOT NULL OR age_adjusted_rate_per_100k IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: single_race_crude_rate_coverage
+    description: In the single-race vintage every unsuppressed count has a published crude rate, and a
+      zero-death row has a true rate of exactly 0.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE dataset_vintage = 'single_race' AND ((deaths IS NOT NULL
+      AND crude_rate_per_100k IS NULL) OR (deaths = 0 AND crude_rate_per_100k <> 0))
+    mustBe: 0
+  - type: sql
+    name: age_adjusted_rate_bridged_race_only
+    description: CDC WONDER does not publish age-adjusted rates at county grain in the single-race vintage
+      — every single_race row must have a NULL age-adjusted rate.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE dataset_vintage = 'single_race' AND age_adjusted_rate_per_100k
+      IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: crude_rate_reconciles_with_deaths_and_population
+    description: The published crude rate must equal deaths / population x 100,000 within source rounding
+      (rates are published to 1 decimal, so max rounding error 0.05).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE crude_rate_per_100k IS NOT NULL AND deaths IS NOT NULL
+      AND population > 0 AND ABS(crude_rate_per_100k - deaths * 100000.0 / population) > 0.051
+    mustBe: 0
+  - type: sql
+    name: vintage_year_alignment
+    description: 'The vintage stitch is a clean year split: bridged_race serves 1999-2017 and single_race
+      serves 2018 onward — each year comes from exactly one vintage (never blended).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (dataset_vintage = 'bridged_race' AND year NOT BETWEEN
+      1999 AND 2017) OR (dataset_vintage = 'single_race' AND year < 2018)
+    mustBe: 0
+  - type: sql
+    name: firearm_homicide_contained_in_parents
+    description: 'Category containment: firearm_homicide (homicide intent AND firearm mechanism) can exceed
+      neither firearm_deaths nor homicide within a county-year, wherever both counts are published.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, MAX(CASE WHEN cause_category = 'firearm_deaths'
+      THEN deaths END) AS fd, MAX(CASE WHEN cause_category = 'homicide' THEN deaths END) AS hom, MAX(CASE
+      WHEN cause_category = 'firearm_homicide' THEN deaths END) AS fh FROM {object} GROUP BY year, county_fips)
+      WHERE fh IS NOT NULL AND ((fd IS NOT NULL AND fh > fd) OR (hom IS NOT NULL AND fh > hom))
+    mustBe: 0
+  - type: sql
+    name: population_consistent_across_causes
+    description: The population denominator is a property of the county-year, not the cause — all four
+      cause rows for a county-year must carry the same population.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, COUNT(DISTINCT population) AS n FROM {object}
+      GROUP BY year, county_fips) WHERE n <> 1
+    mustBe: 0
+  - type: sql
+    name: all_159_counties_every_year_and_cause
+    description: WONDER publishes a full county grid (show-zeros was on; suppression NULLs cells, never
+      removes rows) — every (year, cause_category) must have exactly 159 county rows.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, cause_category, COUNT(*) AS n FROM {object} GROUP BY year,
+      cause_category) WHERE n <> 159
+    mustBe: 0
+  - type: sql
+    name: all_four_causes_every_year
+    description: Every served year must carry all four cause categories (the county-grid check alone cannot
+      detect a whole missing cause).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, COUNT(DISTINCT cause_category) AS n FROM {object} GROUP
+      BY year) WHERE n <> 4
+    mustBe: 0
+customProperties:
+- property: title
+  value: Firearm and Homicide Deaths by County
+- property: summary
+  value: Firearm deaths, homicides, firearm homicides, and legal-intervention deaths with rates per 100,000
+    for Georgia counties by year, from death certificates, 1999 onward.
+- property: source
+  value: CDC WONDER, Multiple Cause of Death (NCHS/NVSS death certificates; bridged-race 1999-2020 and
+    single-race 2018-present datasets)
+- property: source_url
+  value: https://wonder.cdc.gov/mcd.html
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 1999-2024
+- property: schema_hash
+  value: 239bee9385ad012f1e3d883f5760f71aabb3154cbb9f0429eed65d2a01b89f7c
+- property: available_years
+  value:
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

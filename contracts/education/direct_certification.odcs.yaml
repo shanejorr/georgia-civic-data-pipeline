@@ -1,0 +1,403 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.direct_certification
+name: direct_certification
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Share of K-12 students directly certified for free school meals across Georgia public schools
+    and districts, published by GOSA for fiscal years 2014-2024 (FY2024 = the 2023-24 school year). Direct
+    certification is the automatic, categorical-eligibility subset of free/reduced-price meal eligibility
+    — a student is directly certified because their household participates in SNAP or TANF, the student
+    is homeless, unaccompanied youth, foster, or migrant, or (from FY2024) the household''s Medicaid income
+    is at or below the free/reduced-price-lunch standard — with no household application required. One
+    fact table at three detail levels: school (one row per school), district (one row per district / system,
+    including charters, state agencies, and State Schools), and state (the statewide ''State of Georgia''
+    aggregate, published 2022-2024 only). From FY2020 the underlying numerator and denominator counts
+    are also published. Merges the formerly separate direct_certification_school and direct_certification_district
+    topics.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: 'Three detail levels (school, district, state) in one fact table, split by parquet filename;
+    school_code is NULL on district/state rows and district_code is NULL on state rows. The statewide
+    aggregate exists only for 2022-2024; earlier years publish no state row and pre-2020 years lack the
+    counts needed to reconstruct one. The underlying counts (num_direct_cert_students, num_k12_students)
+    are published only from FY2020 and are NULL before that. School-level rows and district-level rows
+    come from two independent GOSA downloads whose K-12 bases need not reconcile exactly, so school rows
+    are NOT guaranteed to sum to their district row. Two methodology breaks limit year-over-year comparison:
+    FY2017 rates EXCLUDE foster students (FY2018+ include them), and FY2024 adds the Medicaid DC-M category,
+    roughly doubling certified counts — comparisons crossing 2016->2017, 2017->2018, or 2023->2024 are
+    not apples-to-apples. The State Schools representation changes across eras: three individual 7-digit
+    rows (7991893-7991895) through 2019, one combined 799 row from 2020. No suppression exists in this
+    topic — NULL never means suppressed.'
+tags:
+- education
+- gosa
+- direct_certification
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/direct_certification/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/direct_certification/**/*.parquet
+  format: parquet
+schema:
+- name: direct_certification
+  logicalType: object
+  physicalType: parquet
+  physicalName: direct_certification
+  description: direct_certification fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code (geography columns are NULL
+    at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+  - property: key_metric
+    value: direct_cert_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/direct_certification/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM direct_certification WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM direct_certification WHERE district_code = '601' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Georgia fiscal year, equal to the ending (spring) calendar year of the school year (FY2024
+      = 2023-24). Read from the in-file FISCAL_YEAR column (SCHOOL_YEAR in the 2014 files) and cross-checked
+      against the filename year in both download families.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA district/system code (FK to districts dimension), zero-padded to 3 digits; 7-digit
+      charter and State-School codes and 3-digit state-agency codes are preserved unchanged. NULL on the
+      statewide aggregate rows. Beyond the ~180 standard county/city districts the series includes 799
+      (combined State Schools, 2020+), 890 (Dept. of Corrections, 2019 only), 891 (Dept. of Juvenile Justice,
+      2017+), 7991893-7991895 (individual State Schools, 2014-2019; superseded by the combined 799 row
+      from 2020), and 782xxxx/783xxxx state and commission charter schools.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    - property: null_meaning
+      value: NULL only on the statewide aggregate (state) rows (2022-2024); populated on every school
+        and district row.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: GOSA school code, zero-padded to 4 characters (composite FK to schools dimension with
+      district_code; not globally unique on its own). Populated on school rows only — district and state
+      aggregate rows carry NULL. The 2014-2016 CSVs publish the padded form natively; the 2017-2024 .xls
+      files publish unpadded 3/4-digit codes that are zero-filled to match.
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    - property: null_meaning
+      value: Populated only on school-detail rows; NULL on every district-detail and state-detail row
+        (those levels have no school code). The column is shared across the education key shape.
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: direct_cert_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Share of K-12 students directly certified for free school meals, on the 0-1 scale (0.69
+      = 69%). Bronze publishes 0-100 (integer percent in 2014-2016, one-decimal float thereafter); divided
+      by 100 per data-cleaning-standards §4 and rounded to 3 decimals to strip .xls binary-float artifacts
+      (82.400002 -> 0.824). Bounded — never exceeds 1.0 in any year. Never NULL (the source has no suppression).
+      Where the FY2020+ counts exist, the rate reconciles with num_direct_cert_students / num_k12_students
+      to within one-decimal-percent rounding (max observed deviation 0.0005). Two methodology breaks:
+      FY2017 excludes foster students (FY2018+ re-includes them), and FY2024 adds the Medicaid (DC-M)
+      category — comparisons crossing 2016->2017, 2017->2018, or 2023->2024 are not apples-to-apples.'
+    examples:
+    - 0.69
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Direct Cert Rate
+    - property: short_description
+      value: Share of K-12 students automatically eligible for free meals (via SNAP/TANF, foster, homeless,
+        migrant, or Medicaid), on a 0-1 scale.
+    - property: unit
+      value: proportion
+    - property: key_metric
+      value: true
+  - name: num_direct_cert_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Headcount of K-12 students directly certified — the numerator of direct_cert_rate (bronze
+      K12_POVERTY_STUDENT_CT). Published FY2020 onward only; NULL for 2014-2019. Always at most num_k12_students
+      (enforced by a quality check).
+    examples:
+    - 2233
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Direct Cert Students
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'NULL for FY2014-FY2019: the source did not publish the underlying counts before FY2020.
+        Populated for every row (all detail levels) from 2020 on. NOT suppression.'
+    - property: metric_component
+      value: numerator
+  - name: num_k12_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Total K-12 enrollment used as the denominator of direct_cert_rate (the NSLP K-12 enrollment
+      base — not the October/March FTE enrollment published by the enrollment topics; bronze K12_STUDENT_COUNT).
+      Published FY2020 onward only; NULL for 2014-2019. Strictly positive where present (enforced by a
+      quality check).
+    examples:
+    - 3238
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number K12 Students
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'NULL for FY2014-FY2019: the source did not publish the underlying counts before FY2020.
+        Populated for every row (all detail levels) from 2020 on. NOT suppression.'
+    - property: metric_component
+      value: denominator
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: direct_cert_rate_within_unit_interval
+    description: direct_cert_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE direct_cert_rate IS NOT NULL AND (direct_cert_rate < 0
+      OR direct_cert_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: num_direct_cert_students_non_negative
+    description: num_direct_cert_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_direct_cert_students IS NOT NULL AND num_direct_cert_students
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_k12_students_non_negative
+    description: num_k12_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_k12_students IS NOT NULL AND num_k12_students < 0
+    mustBe: 0
+  - type: sql
+    name: school_code_requires_district_code
+    description: 'Structural fact: a school-detail row (school_code populated) always nests under a district,
+      so a non-NULL school_code with a NULL district_code is an impossible geography-key pattern — it
+      would mean a school row lost its district or a malformed aggregate.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE school_code IS NOT NULL AND district_code IS NULL
+    mustBe: 0
+  - type: sql
+    name: district_code_length_3_or_7
+    description: Where populated, district_code is a 3-character standard county/city / state-agency code
+      or a 7-character charter / State-School code — any other length means the ID formatting regressed.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NOT NULL AND LENGTH(district_code) NOT
+      IN (3, 7)
+    mustBe: 0
+  - type: sql
+    name: school_code_length_4
+    description: Where populated (school-detail rows), school_code is always zero-padded to exactly 4
+      characters, matching the schools dimension key format.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE school_code IS NOT NULL AND LENGTH(school_code) <> 4
+    mustBe: 0
+  - type: sql
+    name: direct_cert_rate_never_null
+    description: 'Neither family has suppression: every school, district, and state row in every published
+      year carries a numeric rate (verified across all 22 bronze files). A NULL means a parsing regression
+      or a new suppression regime — either must be analyzed.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE direct_cert_rate IS NULL
+    mustBe: 0
+  - type: sql
+    name: counts_null_before_2020
+    description: The numerator/denominator counts were first published in FY2020 in both families; any
+      non-NULL count before 2020 is fabricated data and must be analyzed.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year < 2020 AND (num_direct_cert_students IS NOT NULL OR
+      num_k12_students IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: counts_present_2020_onward
+    description: 'From FY2020 every row at every detail level publishes both counts (verified: zero NULLs
+      in the 2020-2024 bronze files of both families). A NULL means a parsing/cast regression — counts
+      and rate must arrive together.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE year >= 2020 AND (num_direct_cert_students IS NULL OR num_k12_students
+      IS NULL)
+    mustBe: 0
+  - type: sql
+    name: num_k12_students_positive_when_present
+    description: Where the denominator is published (FY2020+), total K-12 enrollment must be strictly
+      positive — a zero denominator cannot produce the published rate.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_k12_students IS NOT NULL AND num_k12_students <= 0
+    mustBe: 0
+  - type: sql
+    name: direct_cert_numerator_within_denominator
+    description: The directly-certified headcount is a subset of K-12 enrollment, so the numerator must
+      never exceed the denominator where both are published (FY2020+), at every detail level.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_direct_cert_students IS NOT NULL AND num_k12_students
+      IS NOT NULL AND num_direct_cert_students > num_k12_students
+    mustBe: 0
+  - type: sql
+    name: direct_cert_rate_matches_counts
+    description: 'Component reconciliation: where all three values are published (FY2020+), the rate must
+      equal numerator/denominator within 0.002 on the 0-1 scale — the bronze rate is rounded to one decimal
+      on the 0-100 scale and gold rounds to 3 decimals, so 0.002 is ~2x worst-case rounding; verified
+      max observed deviation is 0.0005 in both families.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE direct_cert_rate IS NOT NULL AND num_direct_cert_students
+      IS NOT NULL AND num_k12_students IS NOT NULL AND num_k12_students > 0 AND ABS(direct_cert_rate -
+      (CAST(num_direct_cert_students AS DOUBLE) / num_k12_students)) > 0.002
+    mustBe: 0
+  - type: sql
+    name: no_state_rows_before_2022
+    description: 'Structural fact: the statewide ''State of Georgia'' row (both geography keys NULL) is
+      published only from 2022. A row with NULL district_code in an earlier year means a fabricated aggregate
+      or an ID parse failure — either must be analyzed.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL AND year < 2022
+    mustBe: 0
+  - type: sql
+    name: one_state_row_per_year_2022_onward
+    description: Every year from 2022 carries exactly one statewide aggregate row (district_code IS NULL).
+      Zero means the published state row was lost; more than one means a duplicated or mis-classified
+      aggregate.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year FROM {object} WHERE year >= 2022 GROUP BY year HAVING SUM(CASE
+      WHEN district_code IS NULL THEN 1 ELSE 0 END) <> 1) AS bad_years
+    mustBe: 0
+  - type: sql
+    name: state_counts_equal_district_sums
+    description: 'Component reconciliation: in every year that publishes a statewide row (2022-2024),
+      its numerator and denominator equal the sums over the district-DETAIL rows exactly (verified in
+      bronze). District-detail rows are the school_code IS NULL AND district_code IS NOT NULL rows — school-detail
+      rows are excluded so they are not double-counted against the state total.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM (SELECT year, MAX(CASE WHEN district_code IS NULL THEN num_direct_cert_students
+      END) AS state_num, MAX(CASE WHEN district_code IS NULL THEN num_k12_students END) AS state_den,
+      SUM(CASE WHEN district_code IS NOT NULL AND school_code IS NULL THEN num_direct_cert_students END)
+      AS district_num, SUM(CASE WHEN district_code IS NOT NULL AND school_code IS NULL THEN num_k12_students
+      END) AS district_den FROM {object} GROUP BY year) AS by_year WHERE state_num IS NOT NULL AND state_den
+      IS NOT NULL AND (state_num <> district_num OR state_den <> district_den)
+    mustBe: 0
+customProperties:
+- property: title
+  value: Direct Certification for Free School Meals
+- property: summary
+  value: Share of K-12 students automatically eligible for free school meals via SNAP/TANF and other programs,
+    by Georgia school, district, and state, 2014-2024.
+- property: source
+  value: GOSA
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2014-2024
+- property: schema_hash
+  value: 335e0faaae4e3eedca087da3c4a83fcc6a87ca2038581d1be65f7d453782ce4b
+- property: available_years
+  value:
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

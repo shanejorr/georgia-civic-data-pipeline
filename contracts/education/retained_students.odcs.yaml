@@ -1,0 +1,400 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.retained_students
+name: retained_students
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Georgia Office of Student Achievement (GOSA) Retained K-12 dataset. For every Georgia public
+    school, school district, and the state as a whole, reports the total number of students retained (held
+    back) in grades K-12 during the school year, the total K-12 enrollment (2011 onward only), and a demographic
+    breakdown of the retained population — counts and shares of retained by race and gender. The race
+    axis carries six canonical codes (`native_american`, `asian_pacific_islander` — the bronze `Asian`/`Asians`
+    label is a combined Asian/Pacific Islander bucket, with no separate Pacific Islander row — `black`,
+    `hispanic`, `multiracial`, `white`); gender is `male`/`female`. Coverage spans the 2003-04 school
+    year (filename year 2004) through the 2023-24 school year (filename year 2024) — 21 files.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: '`num_students` (total K-12 enrollment) is available only on `demographic = all` rows for
+    2011 and 2013-2024. It is NULL for every non-`all` demographic row (bronze has no per-demographic
+    enrollment), for every row in 2004-2010 (the wide-format bronze publishes no enrollment column), and
+    for all of 2012 (corrupt bronze `Total Enrolled`, inflated ~17x, is NULLed); 8 2016 `all` rows are
+    also NULL where source enrollment was unpublished. An overall retention rate (`num_retained` / `num_students`)
+    is therefore computable only on `demographic = all` rows in 2011 and 2013-2024. `pct_of_retained_cohort`
+    is a SHARE of the total retained cohort that belongs to each demographic (it sums toward 1.0 across
+    race demographics and across gender demographics within an entity), NOT a within-demographic retention
+    rate; it is NULL on `demographic = all` rows (100% by definition). Suppressed cells (cohort below
+    the privacy threshold) null `num_retained` and `pct_of_retained_cohort`.'
+tags:
+- education
+- governor's office of student achievement
+- retained_students
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/retained_students/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/retained_students/**/*.parquet
+  format: parquet
+schema:
+- name: retained_students
+  logicalType: object
+  physicalType: parquet
+  physicalName: retained_students
+  description: retained_students fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: gosa
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+  - property: key_metric
+    value: pct_of_retained_cohort
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/retained_students/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), schools detail
+      query: SELECT * FROM retained_students WHERE year = 2024 LIMIT 100
+    - description: District 601 in 2024
+      query: SELECT * FROM retained_students WHERE district_code = '601' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (2024 = 2023-2024). Sourced from the bronze `School
+      Year` / `School_Year` column for 2011-2024 (cross-checked against the filename); from the filename
+      for 2004-2010 (no year column in those eras).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state
+      charter / state school networks. NULL for state-level aggregate rows. FK to districts dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded). NULL for district- and state-level aggregate
+      rows. FK to schools dimension (composite key with district_code).
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Canonical demographic code (FK to demographics dimension). `all` is the overall retained
+      cohort; race uses the combined `asian_pacific_islander` bucket (pre-1997 OMB convention: the six
+      race-bucket retained counts sum exactly to the total retained at the state row in every year, so
+      Pacific Islanders are folded in, never published separately); gender is `male`/`female`. Race values
+      are mutually exclusive with each other, as are gender values; `all` overlaps both axes.'
+    examples:
+    - 'black'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'female'
+    - 'hispanic'
+    - 'male'
+    - 'multiracial'
+    - 'native_american'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Student subgroup the row covers (race or gender); 'all' is the whole retained group. Race
+        uses the combined asian_pacific_islander bucket.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_retained
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of K-12 students in this demographic at this entity who were retained (held back)
+      during the school year. For `demographic = all`, the total retained count. NULL when suppressed.
+    examples:
+    - 13
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Retained
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Suppressed by GOSA (cell below the privacy reporting threshold; `TFS` / `Too Few Students`
+        markers, plus blank cells in 2009).
+    - property: metric_component
+      value: numerator
+  - name: num_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Total K-12 enrollment at this entity. Populated only on `demographic = all` rows in
+      2011 and 2013-2024. NULL for every non-`all` row (bronze publishes no per-demographic enrollment)
+      and for every row in 2004-2010 (the wide-era bronze publishes no enrollment at all — its total columns
+      are retained counts). 2012 is fully NULL: the 2012 bronze `Total Enrolled` is corrupt (inflated
+      ~17x at every detail level, state row 27,864,309 vs ~1.65M expected) and is NULLed per the known-source-defect
+      rule; 2012 `num_retained` is internally consistent and preserved. With `num_retained` on `all` rows
+      this yields an overall retention rate.'
+    examples:
+    - 3237
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Students
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'Enrollment not published for this cell: every non-`all` demographic row (no per-demographic
+        enrollment exists), every row in 2004-2010 (the wide-format bronze publishes no enrollment column)
+        and in 2012 (corrupt source enrollment, NULLed per §4b), plus 8 2016 `all` rows whose source enrollment
+        was unpublished. NOT a suppression marker.'
+    - property: metric_component
+      value: denominator
+  - name: pct_of_retained_cohort
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of the entity's total retained cohort who belong to this demographic, 0-1 scale
+      (bronze 0-100 divided by 100; whole-percent precision in 2011-2024). NOT a within-demographic retention
+      rate. In 2009 the published White and Multiracial percent columns are corrupt (both repeat the Male
+      share); for those two demographics in 2009 the share is derived as num_retained / total retained
+      from the internally consistent counts instead.
+    examples:
+    - 0.22
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent of Retained Cohort
+    - property: short_description
+      value: Share of this entity's retained students who are in this demographic, on a 0-1 scale; a makeup
+        share, NOT a retention rate, and NULL on the 'all' row.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: NULL on `demographic = all` rows (the share is 100%% by definition and not emitted) and when
+        suppressed.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 9 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'female', 'hispanic', 'male', 'multiracial', 'native_american',
+      'white')
+    mustBe: 0
+  - type: sql
+    name: num_retained_non_negative
+    description: num_retained is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_retained IS NOT NULL AND num_retained < 0
+    mustBe: 0
+  - type: sql
+    name: num_students_non_negative
+    description: num_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 0
+    mustBe: 0
+  - type: sql
+    name: pct_of_retained_cohort_within_unit_interval
+    description: pct_of_retained_cohort is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_of_retained_cohort IS NOT NULL AND (pct_of_retained_cohort
+      < 0 OR pct_of_retained_cohort > 1)
+    mustBe: 0
+  - type: sql
+    name: num_retained_le_num_students
+    description: 'num_retained never exceeds num_students where both are populated (retained students
+      are a subset of enrollment). Verified on bronze: zero violations in every tidy-era year.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_retained IS NOT NULL AND num_students IS NOT NULL AND
+      num_retained > num_students
+    mustBe: 0
+  - type: sql
+    name: pct_of_retained_cohort_null_for_all
+    description: pct_of_retained_cohort is NULL on `demographic = all` rows (the share is 100%% by definition
+      and not emitted).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE demographic = 'all' AND pct_of_retained_cohort IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: num_students_only_on_all_rows_in_published_years
+    description: 'num_students is structurally NULL outside `demographic = all` rows in 2011 and 2013-2024:
+      the bronze publishes no per-demographic enrollment, no enrollment at all for 2004-2010, and corrupt
+      (masked) enrollment for 2012.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND (demographic <> 'all' OR year
+      <= 2010 OR year = 2012)
+    mustBe: 0
+  - type: sql
+    name: race_partition_sums_to_total
+    description: 'The six mutually exclusive race buckets partition the retained cohort: wherever all
+      six race num_retaineds and the `all` total are published for an entity, the race sum equals the
+      total exactly (the §5b math test; verified with 0 mismatches across all 21 bronze files). NULL-guarded:
+      suppressed cells exempt the entity.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, MAX(CASE WHEN demographic =
+      'all' THEN num_retained END) AS total, SUM(CASE WHEN demographic <> 'all' THEN num_retained END)
+      AS race_sum, COUNT(CASE WHEN demographic <> 'all' AND num_retained IS NOT NULL THEN 1 END) AS n_published
+      FROM {object} WHERE demographic IN ('all', 'asian_pacific_islander', 'black', 'hispanic', 'multiracial',
+      'native_american', 'white') GROUP BY year, district_code, school_code) WHERE total IS NOT NULL AND
+      n_published = 6 AND race_sum <> total
+    mustBe: 0
+  - type: sql
+    name: gender_partition_sums_to_total
+    description: 'male + female num_retained equals the `all` total wherever all three are published for
+      an entity (verified with 0 mismatches across all 21 bronze files). NULL-guarded: suppressed cells
+      exempt the entity.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, MAX(CASE WHEN demographic =
+      'all' THEN num_retained END) AS total, SUM(CASE WHEN demographic <> 'all' THEN num_retained END)
+      AS gender_sum, COUNT(CASE WHEN demographic <> 'all' AND num_retained IS NOT NULL THEN 1 END) AS
+      n_published FROM {object} WHERE demographic IN ('all', 'male', 'female') GROUP BY year, district_code,
+      school_code) WHERE total IS NOT NULL AND n_published = 2 AND gender_sum <> total
+    mustBe: 0
+customProperties:
+- property: title
+  value: Retained (Held-Back) K-12 Students
+- property: summary
+  value: Students held back a grade in Georgia public schools, with counts and the race/gender makeup
+    of the retained group, by school and district, 2004-2024.
+- property: source
+  value: Governor's Office of Student Achievement (GOSA)
+- property: source_url
+  value: https://gosa.georgia.gov/dashboards-data-report-card/downloadable-data
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2004-2024
+- property: schema_hash
+  value: 9a026e84857d0d0136be180ff026b8048541bc83f9f39b8af94c71c926420296
+- property: available_years
+  value:
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

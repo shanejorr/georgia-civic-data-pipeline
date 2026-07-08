@@ -1,0 +1,261 @@
+# Topic approval tracker.
+#
+# Each entry records whether the user has reviewed and approved a topic's
+# gold output. "Approved" means the user has personally inspected the gold
+# parquet, reviews, and validation report and is satisfied with the result.
+#
+# To add new bronze topics to this file, run:
+#   uv run python scripts/sync_topic_status.py
+#
+# To mark a topic approved, run:
+#   /approve-topic <main_topic> <sub_topic> <topic>
+topics:
+  criminal_justice/cdc/firearm_homicide_deaths:
+    approved: false
+  criminal_justice/dph_oasis/overdose_deaths:
+    approved: false
+  criminal_justice/dph_oasis/violent_deaths:
+    approved: false
+  criminal_justice/fbi_cde/hate_crimes:
+    approved: false
+  criminal_justice/fbi_cde/law_enforcement_employees:
+    approved: false
+  criminal_justice/fbi_cde/nibrs_arrests:
+    approved: false
+  criminal_justice/fbi_cde/nibrs_offenses:
+    approved: false
+  criminal_justice/federal_justice/district_filings:
+    approved: false
+  criminal_justice/federal_justice/district_sentences:
+    approved: false
+  criminal_justice/gdc/inmate_population:
+    approved: false
+  criminal_justice/gdc/inmate_releases_county:
+    approved: false
+  criminal_justice/gdc/recidivism_reconviction:
+    approved: false
+  criminal_justice/ice_detention/detention_population:
+    approved: false
+  criminal_justice/jails/jail_population:
+    approved: false
+  criminal_justice/juvenile_clearinghouse/decision_points:
+    approved: false
+  criminal_justice/juvenile_clearinghouse/out_of_home_placement:
+    approved: false
+  criminal_justice/juvenile_clearinghouse/placements:
+    approved: false
+  criminal_justice/ojjdp/juvenile_court_cases:
+    approved: false
+  criminal_justice/ojjdp/juvenile_population:
+    approved: false
+  criminal_justice/open_policing/gsp_traffic_stops:
+    approved: false
+  criminal_justice/pardons_paroles/parole_decisions:
+    approved: false
+  criminal_justice/traffic_safety/fatal_crashes:
+    approved: false
+  education/georgiainsights/attendance_dashboard:
+    approved: true
+    serve: false
+    approved_at: '2026-06-12'
+    approved_gold_sha256: e775f9c6e19b35ce94864ebeea76649c705d86bdf2133169aa0c89eac6824390
+  education/georgiainsights/ccrpi_climate_star_rating:
+    approved: true
+    approved_at: '2026-06-23'
+    approved_gold_sha256: a80a23278947b9432752a95e477bf1840a1250b62674ba3cb9c6381da8643489
+  education/georgiainsights/ccrpi_content_mastery:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: c86e5c76b237dd6028056f7bb5e9aae18002b86c389ab98d9feec06e402b6258
+  education/georgiainsights/ccrpi_graduation_rate:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 596b84ab0a3a500d51c27c0084b7cbcea6613f5063cac7fe17fb1244542e1ed2
+  education/georgiainsights/ccrpi_progress:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 154538fd142065fd069f7ead44d279044ef3d31e08b23b38a0b608213dd8e8ed
+  education/georgiainsights/ccrpi_readiness:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 984ecd3785dc4c28101d9e9e0efa41ab8f209c5b69d1096526de030503a6c708
+  education/georgiainsights/ccrpi_scoring_by_component:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: e7652fb48c392dda31e796a3b2be4a0ca38d5580e87b433a5c37742b390c1d25
+  education/georgiainsights/enrollment_by_grade:
+    approved: true
+    serve: false
+    approved_at: '2026-06-24'
+    approved_gold_sha256: a904d9affd192ced95b86c7f56ded90179c7548a9c460b6108678645528a19f2
+  education/georgiainsights/enrollment_march_gender_race_ethnicity:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: f9a119578dae958f5eb7f966b9e896fceca91fb87b7be8bd5cd4ea4f09bd4fc4
+  education/georgiainsights/enrollment_october_disability:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 6ca3fa6b241b2246002b9c1a5b26a56ae7b9322dc29f3ef804baf5ccfe035bef
+  education/georgiainsights/enrollment_october_gender_race_ethnicity:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 8e1bad7b76208808f2521383986a8f096e340d3f8477a42437d38d5094f052e3
+  education/georgiainsights/free_reduced_lunch:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: f24b85108b73abad743b0f345c4aae7db649d04af14bc34abe0c92bbf1428a1c
+  education/georgiainsights/georgia_milestones_end_of_course:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 5838202fe5cff422e31172f19801f499a56988046aa48dd93c21fb5b2f4b78ee
+  education/georgiainsights/georgia_milestones_end_of_grade:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: a8fc2e52c83ebe6a58f35622d253c7df241c22cb4b1678a68921e3f8cdade726
+  education/georgiainsights/georgia_student_growth_model_end_of_course:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 8336c5bfc30f34d6d83c3b570ec3ddd06937671fd35d0426ce59503080b57d63
+  education/georgiainsights/georgia_student_growth_model_end_of_grade:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: c0ac431adf35100c77d3df913a06a130462fe5b6952ac767808645adf0f6e43d
+  education/georgiainsights/pathway_graduation_rate:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 4fc058624f64f6078ccfe64f48caa1728d9dea4cb66e6d532f13978888f6ef68
+  education/georgiainsights/wida_access:
+    approved: true
+    approved_at: '2026-07-07'
+    approved_gold_sha256: e057265535edd8821b272b5220e3d6b4ab8df3047378659b92645818fe0806ce
+  education/gosa/act_scores:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 4393c9ca89809a9ec39f17701b6a6bdf73eaf19d2eebb971d482f71f7acfbb89
+  education/gosa/advanced_placement_scores:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: e971776c1302d70dc0f396918ac2631f62d98ddcbe833c1ea29566c73c369176
+  education/gosa/attendance:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: e9e183e2a0fa70583b1c7763cca882f6c7a07436cc5b148bb29476bf511d08af
+  education/gosa/certified_personnel:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 184b82feb1bf1d6f7390551f9c946efb2e6df8fcf48be9b89c0a8e31b815af5a
+  education/gosa/direct_certification:
+    approved: true
+    approved_at: '2026-06-23'
+    approved_gold_sha256: 05c8882aaa831716cdaa70a2405124e8dd7e0c26c6f143eea5a923c9f3ee6d13
+  education/gosa/dropout_rate_7_12:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 1cde3edebef7d762840dfa5103b1439576bdd9b040f51b26ace1162a8c71c37e
+  education/gosa/dropout_rate_9_12:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 48d5e943d5bbf4fd4408a69c5d7f9dab4dd9297e72d2dd803537f1599c7f342e
+  education/gosa/educator_qualifications_emergency_and_provisional_credentials:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: f549f6eadf534ed640f8524f5ad984119c091c47c08dfe316f667cfd1e8629e9
+  education/gosa/educator_qualifications_inexperienced_teachers_leaders:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: b47e0ac6839a42ae7a1d8a52636cb9509a74be1e1c6972674cc9a0932060ee9e
+  education/gosa/educator_qualifications_out_of_field_teachers:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: e42f579fa3182ff911a560c2a0f92478c4eb14e467cb3f27cc3ccdba13c367f9
+  education/gosa/english_learner_exit_rate:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: 911955b58a7643af2d24ba2a061cd5c53f05fb8c450b7bf6e593c8a0735ce425
+  education/gosa/enrollment_by_grade_level:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: ff91a42f4ba65ba1c6f115555c3988231082257e4769d47ae0bc9859e6fe6d92
+  education/gosa/enrollment_by_subgroup_programs:
+    approved: false
+  education/gosa/enrollment_demographic_shares:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: cafc488d194c3d9f7e567c7be8190576711892811f0d260c216a16a1350b9e45
+  education/gosa/enrollment_program_participation:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: c7446ced9f8dbd203542249f800389ad9dd5c5f7de1ee7159c100a64afab06f0
+  education/gosa/financial_efficiency_star_rating:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: aa01c64e91407f1c5460999f5bce0f7f9be6e38757d3aaeee5186955efefce53
+  education/gosa/georgia_alternate_assessment:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: bf516d818857da9b683740cba2ab53500e974ea7bba0aaee4df31a84419be6f9
+  education/gosa/georgia_milestones_end_of_course_by_grade_level:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: 7ae6e546374b695fbe869f804663b514d0d950c307b460882d6584b4180a1ab0
+  education/gosa/georgia_milestones_end_of_course_lexile:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: 7e04a0d85636d43ddc06cae0cae30202a18c2a9cb1273c75ddfb9df2db76df6a
+  education/gosa/georgia_milestones_end_of_grade_by_grade_level:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: 3b79a6c5782193084506310ca50ba02d1f4404b9c364e866b6b20b47d4eb459a
+  education/gosa/georgia_milestones_end_of_grade_lexile:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: 297f00339bf7e9c825860a91dafee7c7202d1782ae81427c7eb27c1ac3b86afd
+  education/gosa/graduation_rate_4_year_cohort:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 7f9b45af274d1f81f1b27eb39597885612981e8ad577e0dee8a019ac1db3ab9b
+  education/gosa/high_school_completers:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: e99d74cdb6ac3c28414fbf9bad097e731c38a2f858d5a777bcbcde273c01eef6
+  education/gosa/hope_eligible_graduates:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: c16658d2d11bb27c8760c53720a36f3dd3611c01a47106ebc64870901ba31b3e
+  education/gosa/postsecondary_c11:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: 20fcf70a53fdc991cf00169a68adeddf49634104194da41d963e25ae4fff0fce
+  education/gosa/postsecondary_c12:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: cf2f7975eff20a0aaa5a3c25f09c4bda5c64c955eae8cab810f696b1441b1824
+  education/gosa/retained_students:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 752dc382d8b1a2c6a14e1f8d391a30074a99799ab12c900edba3567e981c4fdb
+  education/gosa/revenues_and_expenditures:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 4b38535b8740f161295d6baa9b31d2d1f9765c56fb6cfd603342b42e74ec8911
+  education/gosa/salaries_and_benefits:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 8afcdb7a66930f4fcc7df7380caf429df7e8c43fdeb2c73fbe4ccf7395eed632
+  education/gosa/sat_scores_highest:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 64c73931ccbd4a49d7aa4baf6c7fcff32651072f6a58597194e12291b94a411b
+  education/gosa/sat_scores_recent:
+    approved: true
+    approved_at: '2026-06-12'
+    approved_gold_sha256: 5ddbac310e36c9d6f3262722703e04d522e0d07eab7c74ffc0ecaca25ca6769f
+  education/gosa/student_mobility_rate:
+    approved: true
+    approved_at: '2026-06-24'
+    approved_gold_sha256: 8425063aff8e05432fbef90e69cf7b916a903eaf93461a24882cd6a0153dbbc6
+dimensions:
+  districts: 4c33e0dac84f019d315c29ccf08c21a60d9919c575c34313563b9c57da36f63a
+  schools: 5792c413b2f0778e6a894cb252f76f05530053d3315bc15e8b8e486cac8aa384
+  demographics: ef696f014f8b9a831dd99b2a05967cfbe7a1adde83424516035d5a715ae44f94
+  counties: 0a15df5a75c4f1dd0d7c4741e3a9b9a04fa749d11979d0175519db478d20d5c3

@@ -1,0 +1,360 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.recidivism_reconviction
+name: recidivism_reconviction
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia''s canonical prison-recidivism measure: the share of inmates released from Georgia
+    Department of Corrections facilities in a given cohort year who were RECONVICTED of a new felony within
+    three years of release. Statewide only, broken down by release facility type (private prisons, state
+    prisons and inmate boot camps, county correctional institutions, transition centers, plus an all-facilities
+    rollup) and by sex (full-cohort rows plus a female-only block), in two parallel editions: calendar-year
+    release cohorts (2011-2022) and Georgia state fiscal-year release cohorts (2012-2023). This measures
+    felony reconviction, NOT re-arrest and NOT re-incarceration or return to custody — it is lower than
+    re-arrest-based recidivism measures by construction and must never be pooled with them. GDC publishes
+    only rates: no cohort sizes or reconviction counts exist in this report.'
+  usage: Cite the Georgia Department of Corrections, Office of Data Management & Research (Statistical
+    Trends standing reports). Always filter to a single reporting_period — the calendar-year and fiscal-year
+    editions are methodologically distinct release-window definitions and must never be pooled or averaged.
+    Use facility_type = 'all' with demographic = 'all' for the headline statewide rate; never sum or average
+    rates across facility types or demographic values (no cohort sizes are published to weight them).
+    Do not compare against re-arrest- or re-incarceration-based recidivism measures — this is felony reconviction
+    only.
+  limitations: 'Statewide only: the source publishes no county or facility-level grain, so this dataset
+    has no county_fips column. Rates only: GDC publishes no cohort sizes or reconviction counts, so rates
+    cannot be re-weighted, combined across facility types, or converted to counts. This measures felony
+    RECONVICTION within 3 years of release — not re-arrest, not misdemeanor reconviction, and not re-incarceration/return
+    to custody — and must not be pooled with recidivism series built on those definitions. The calendar_year
+    and fiscal_year editions are separate methodological bases; never pool across reporting_period. Sex
+    breakdowns cover only the female block GDC publishes (no male-only rows; female rows exist only for
+    the all-facilities rollup, state prisons/IBCs, and transition centers). The female facility-type rows
+    do not exhaust the female rollup: ''All Female Facilities'' includes women released from facility
+    types with no published female row, and in calendar year 2012 it exceeds both published female member
+    rows as published by the source. The ''**'' marker on the source''s two rollup rows has no printed
+    definition on the page. A YEAR >= 2000 floor is enforced at transform time (all published cohorts,
+    2011-2023, clear it). Rates are as published, rounded to one decimal on the percent scale (0.001 on
+    the served proportion scale).'
+tags:
+- criminal_justice
+- georgia department of corrections, office of data management & research — statistical trends standing
+  reports
+- recidivism_reconviction
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/recidivism_reconviction/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/recidivism_reconviction/**/*.parquet
+  format: parquet
+schema:
+- name: recidivism_reconviction
+  logicalType: object
+  physicalType: parquet
+  physicalName: recidivism_reconviction
+  description: recidivism_reconviction fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, demographic, reporting_period, facility_type.
+  customProperties:
+  - property: sub_topic
+    value: gdc
+  - property: detail_levels
+    value:
+    - states
+  - property: default_detail
+    value: states
+  - property: grain
+    value:
+    - year
+    - demographic
+    - reporting_period
+    - facility_type
+  - property: key_metric
+    value: reconviction_rate_3yr
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/recidivism_reconviction/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2023), states detail
+      query: SELECT * FROM recidivism_reconviction WHERE year = 2023 LIMIT 100
+    - description: Filter by reporting_period = calendar_year
+      query: SELECT * FROM recidivism_reconviction WHERE reporting_period = 'calendar_year' AND year =
+        2022 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Release-cohort year — the year the cohort was RELEASED, not the year of reconviction.
+      On reporting_period = 'calendar_year' rows this is the calendar year of release (2011-2022); on
+      'fiscal_year' rows it is the Georgia state fiscal year of release (July 1 - June 30, labeled by
+      its ending year; 2012-2023). Every published cohort has a fully matured 3-year follow-up window
+      — GDC only publishes cohorts whose window is complete. Cohorts before 2000 are not served (year
+      floor enforced at transform time; the source publishes none).
+    examples:
+    - 2022
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    - property: short_description
+      value: Release-cohort year (calendar year on calendar_year rows; Georgia state fiscal year on fiscal_year
+        rows).
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Sex slice of the release cohort; FK to the demographics dimension. 'all' rows cover the
+      FULL cohort of the row's facility type (both sexes); 'female' rows are the female-only subset GDC
+      publishes for all facilities, state prisons/IBCs, and transition centers (no female private-prison
+      or county-CI rows exist in the source, and no male-only rows are published or synthesized). Note
+      the female all-facilities rollup covers ALL women released — including from facility types with
+      no published female row (in calendar year 2012 it exceeds both published female member rows, 20.8%
+      vs 20.6% and 19.8%, as published). Only 'all' overlaps 'female' — never sum across demographic values.
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'female'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Sex slice: ''all'' (full cohort, both sexes) or ''female'' (female-only block). No male-only
+        rows are published.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: reporting_period
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Which edition of the GDC report the row comes from: ''calendar_year'' (release cohorts
+      defined by calendar year, 2011-2022) or ''fiscal_year'' (release cohorts defined by Georgia state
+      fiscal year, July 1 - June 30, 2012-2023). The two editions are different definitions of the release
+      window over overlapping populations — filter to ONE reporting_period per analysis and never pool
+      or average across them.'
+    examples:
+    - 'calendar_year'
+    enum:
+    - 'calendar_year'
+    - 'fiscal_year'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Reporting Period
+    - property: short_description
+      value: 'Release-cohort basis: calendar_year or fiscal_year edition. Methodologically distinct —
+        never pool.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: facility_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Type of GDC facility the cohort was released from: ''private_prison'', ''state_prison_ibc''
+      (state prisons plus inmate boot camps), ''county_ci'' (county correctional institutions), ''transition_center'',
+      or ''all'' — the source''s rollup rows (''All inmate facilities'', ''All Female Facilities'', both
+      marked ''**'' in the source with no printed footnote definition). ''all'' is an aggregate lane,
+      not a member: rates are NEVER additive or averageable across facility types (no cohort sizes are
+      published to weight them) — use the ''all'' row for the overall rate.'
+    examples:
+    - 'state_prison_ibc'
+    enum:
+    - 'all'
+    - 'county_ci'
+    - 'private_prison'
+    - 'state_prison_ibc'
+    - 'transition_center'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Facility Type
+    - property: short_description
+      value: Facility type the cohort was released from; 'all' is the rollup row, not a summable member.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: reconviction_rate_3yr
+    logicalType: number
+    physicalType: double
+    required: true
+    description: 'Share of inmates released in the cohort year (from the row''s facility-type and sex
+      slice) who were reconvicted of a NEW FELONY within three years of release. Published by GDC as a
+      one-decimal percent (e.g. 26.9) and served here as a 0-1 proportion (0.269). Felony reconviction
+      only: excludes re-arrests without conviction, misdemeanor convictions, and technical revocations/returns
+      to custody, so it is lower than re-arrest-based recidivism measures by construction. The underlying
+      cohort size and reconviction count are not published, so rates cannot be re-weighted or combined
+      across rows. Every published cell is populated (no suppression).'
+    examples:
+    - 0.311
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: 3-Year Reconviction Rate
+    - property: short_description
+      value: Share of the release cohort reconvicted of a new felony within 3 years of release (0-1 proportion).
+    - property: unit
+      value: proportion
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'female')
+    mustBe: 0
+  - type: sql
+    name: reporting_period_in_allowed_values
+    description: reporting_period is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_period IS NOT NULL AND reporting_period NOT IN
+      ('calendar_year', 'fiscal_year')
+    mustBe: 0
+  - type: sql
+    name: facility_type_in_allowed_values
+    description: facility_type is one of the 5 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE facility_type IS NOT NULL AND facility_type NOT IN ('all',
+      'county_ci', 'private_prison', 'state_prison_ibc', 'transition_center')
+    mustBe: 0
+  - type: sql
+    name: reconviction_rate_3yr_within_unit_interval
+    description: reconviction_rate_3yr is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE reconviction_rate_3yr IS NOT NULL AND (reconviction_rate_3yr
+      < 0 OR reconviction_rate_3yr > 1)
+    mustBe: 0
+  - type: sql
+    name: year_at_or_after_2000
+    description: 'Hard ingestion rule for this topic: only release cohorts from 2000 onward are served
+      (the source publishes 2011-2023). Enforces the transform-time year floor as a contract invariant.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year < 2000
+    mustBe: 0
+  - type: sql
+    name: reconviction_rate_present
+    description: Every cell in both source matrices is populated (no suppression, no missing cells) —
+      a NULL rate means a parse regression, not source suppression.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE reconviction_rate_3yr IS NULL
+    mustBe: 0
+  - type: sql
+    name: eight_rows_per_cohort_edition
+    description: Each edition publishes exactly 8 breakdown rows per cohort year (5 facility types x full
+      cohort + 3 female rows) — any other count means rows were dropped or duplicated in parsing.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, reporting_period, COUNT(*) AS n FROM {object} GROUP BY year,
+      reporting_period) WHERE n != 8
+    mustBe: 0
+  - type: sql
+    name: full_cohort_rollup_within_member_range
+    description: 'On full-cohort rows (demographic=''all'') the four member facility types are the source''s
+      complete taxonomy, so the facility_type=''all'' rollup — a cohort-weighted average — must lie between
+      the member minimum and maximum (tolerance 0.001 = 0.1 percentage point, the source''s published
+      precision). Deliberately NOT applied to female groups: the female block is a partial breakout and
+      its rollup provably exceeds both published female members in CY 2012 (20.8 vs 20.6/19.8), so no
+      bracket invariant exists there.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, reporting_period, MAX(CASE WHEN facility_type = 'all' THEN
+      reconviction_rate_3yr END) AS rollup_rate, MIN(CASE WHEN facility_type != 'all' THEN reconviction_rate_3yr
+      END) AS member_min, MAX(CASE WHEN facility_type != 'all' THEN reconviction_rate_3yr END) AS member_max
+      FROM {object} WHERE demographic = 'all' GROUP BY year, reporting_period) WHERE rollup_rate IS NOT
+      NULL AND member_min IS NOT NULL AND (rollup_rate < member_min - 0.001 OR rollup_rate > member_max
+      + 0.001)
+    mustBe: 0
+  - type: sql
+    name: female_rows_only_for_published_facility_types
+    description: GDC publishes female rows only for the all-facilities rollup, state prisons/IBCs, and
+      transition centers — a female row under any other facility type means the row-label recode broke.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE demographic = 'female' AND facility_type NOT IN ('all',
+      'state_prison_ibc', 'transition_center')
+    mustBe: 0
+customProperties:
+- property: title
+  value: 3-Year Felony Reconviction Rates
+- property: summary
+  value: Share of Georgia inmates reconvicted of a new felony within three years of release, statewide
+    by facility type and sex, for calendar- and fiscal-year release cohorts.
+- property: source
+  value: Georgia Department of Corrections, Office of Data Management & Research — Statistical Trends
+    standing reports
+- property: source_url
+  value: https://gdc.georgia.gov/organization/about-gdc/agency-activity/research-and-reports/standing-reports/statistical-trends
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2011-2023
+- property: schema_hash
+  value: a6ed7bbae00fe7481f49c9830e33ec6bdf51e727869e34ccef85edf96c523ae2
+- property: available_years
+  value:
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+- property: year_gaps
+  value: []

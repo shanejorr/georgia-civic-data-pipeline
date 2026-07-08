@@ -1,0 +1,496 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.wida_access
+name: wida_access
+version: 2.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Insights (GaDOE) WIDA ACCESS for ELLs state-level results — the spring English-language-proficiency
+    assessment for Georgia English Learners. For each grade (kindergarten through 12) and each of eight
+    WIDA domains — four language domains (listening, speaking, reading, writing) and four composites (oral
+    language, literacy, comprehension, overall score) — reports the count and share of ELL students scoring
+    at each of the six WIDA proficiency levels (Level 1 Entering through Level 6 Reaching). This is a
+    proficiency-level DISTRIBUTION: it carries headcounts and shares per level, not the underlying 1.0-6.0
+    scale scores, so it cannot answer an ''average WIDA score'' question. The 2021 COVID file additionally
+    publishes enrollment-based testing-participation rates (testing was voluntary/disrupted that year).
+    Coverage: spring 2017 through spring 2024, state level only — bronze publishes no district or school
+    breakdown and no demographic breakouts beyond grade.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: This source has no suppression; a 0 is a real reported value. State rows have NULL district_code
+    and school_code.
+tags:
+- education
+- georgia insights
+- wida_access
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/wida_access/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/wida_access/**/*.parquet
+  format: parquet
+schema:
+- name: wida_access
+  logicalType: object
+  physicalType: parquet
+  physicalName: wida_access
+  description: wida_access fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, grade_level, domain, proficiency_level.
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - states
+  - property: default_detail
+    value: states
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - grade_level
+    - domain
+    - proficiency_level
+  - property: key_metric
+    value: pct_at_proficiency_level
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/wida_access/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2024), states detail
+      query: SELECT * FROM wida_access WHERE year = 2024 LIMIT 100
+    - description: Filter by grade_level = 05
+      query: SELECT * FROM wida_access WHERE grade_level = '05' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Spring testing year, the ending calendar year of the school year (2024 = school year
+      2023-2024). Extracted from the filename and cross-checked against the sheet's title row.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'Always NULL: bronze reports statewide totals only, with no district breakdown.'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    - property: null_meaning
+      value: NULL = state-level geography (every row), NOT suppression — this topic publishes state aggregates
+        only.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'Always NULL: bronze reports statewide totals only, with no school breakdown.'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    - property: null_meaning
+      value: NULL = state-level geography (every row), NOT suppression — this topic publishes state aggregates
+        only.
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: grade_level
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Canonical grade code (`k`, `01`..`12`). Grade is the bronze row axis; there is no `demographic`
+      column because the source has no race/gender/economic breakouts.
+    examples:
+    - '05'
+    enum:
+    - '01'
+    - '02'
+    - '03'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    - '09'
+    - '10'
+    - '11'
+    - '12'
+    - 'k'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Level
+    - property: short_description
+      value: Grade tested, k (kindergarten) through 12.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: domain
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'WIDA test domain: four individually tested language domains (`listening`, `speaking`,
+      `reading`, `writing`) plus four derived composites (`oral_language_composite` = 50% listening +
+      50% speaking; `literacy_composite` = 50% reading + 50% writing; `comprehension_composite` = 70%
+      reading + 30% listening; `overall_score_composite` = 35% reading + 35% writing + 15% listening +
+      15% speaking).'
+    examples:
+    - 'listening'
+    enum:
+    - 'comprehension_composite'
+    - 'listening'
+    - 'literacy_composite'
+    - 'oral_language_composite'
+    - 'overall_score_composite'
+    - 'reading'
+    - 'speaking'
+    - 'writing'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Domain
+    - property: short_description
+      value: 'The skill area scored: listening, speaking, reading, writing, or one of four composite scores.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: proficiency_level
+    logicalType: string
+    physicalType: string
+    required: true
+    description: WIDA proficiency level, the fixed six-level scale from `level_1_entering` (lowest) to
+      `level_6_reaching` (highest).
+    examples:
+    - 'level_4_expanding'
+    enum:
+    - 'level_1_entering'
+    - 'level_2_emerging'
+    - 'level_3_developing'
+    - 'level_4_expanding'
+    - 'level_5_bridging'
+    - 'level_6_reaching'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Proficiency Level
+    - property: short_description
+      value: WIDA proficiency band, level 1 (entering) up to level 6 (reaching).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: num_at_proficiency_level
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Count of ELL students in this grade scoring at this proficiency level in this domain.
+      Zero is a real zero — the source has no suppression (state aggregates exceed any small-cell threshold).
+    examples:
+    - 6475
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number at Proficiency Level
+    - property: unit
+      value: count
+    - property: metric_component
+      value: numerator
+  - name: pct_at_proficiency_level
+    logicalType: number
+    physicalType: double
+    required: true
+    description: Share of domain-tested students at this level (0-1 scale; bronze publishes 0-100). The
+      denominator is `num_tested_in_domain` (students tested in THIS domain), NOT `num_tested`. The six
+      level shares sum to 1.0 per (year, grade_level, domain).
+    examples:
+    - 0.4577
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent at Proficiency Level
+    - property: short_description
+      value: Share of students tested in this domain who scored at this proficiency level, on a 0-1 scale.
+    - property: unit
+      value: proportion
+    - property: key_metric
+      value: true
+  - name: num_tested_in_domain
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Students tested in this specific domain — the denominator of `pct_at_proficiency_level`.
+      2021 (Era 2): taken from the published `Total Tested in Domain` column. All other years (Era 1):
+      reconstructed as the sum of the six `num_at_proficiency_level` counts for the (grade, domain) —
+      the source leaves the denominator implicit (verified: the six published shares sum to 100.0 against
+      exactly this total in every file, and the 2021 published value equals the level-count sum in every
+      cell). Always <= `num_tested`.'
+    examples:
+    - 14148
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested in Domain
+    - property: unit
+      value: count
+    - property: metric_component
+      value: denominator
+  - name: num_tested
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Students in this grade tested in at least one domain — the grade-wide testing headcount,
+      repeated on every (domain, level) row of the grade. Not every such student tested in every domain,
+      so per-domain `num_tested_in_domain` is <= this value.
+    examples:
+    - 14148
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Tested
+    - property: unit
+      value: count
+  - name: enrolled_tested_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of enrolled ELLs in this grade who tested in at least one domain (0-1 scale). Published
+      only for 2021, when ACCESS participation was voluntary/disrupted; NULL for 2017-2020 and 2022-2024
+      (the enrolled-ELL denominator was never published outside 2021).
+    examples:
+    - 0.9545
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Enrolled Tested Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: NULL = metric not published that year (only the 2021 COVID file reports it), NOT suppression.
+  - name: enrolled_tested_in_domain_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of enrolled ELLs in this grade who tested in this domain (0-1 scale) — for composites,
+      in every component domain (the source labels these `Tested in Both Domains` for the two-domain composites
+      and `Tested in All Four Domains` for the overall score). Published only for 2021; NULL for all other
+      years.
+    examples:
+    - 0.9541
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Enrolled Tested in Domain Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: NULL = metric not published that year (only the 2021 COVID file reports it), NOT suppression.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: grade_level_in_allowed_values
+    description: grade_level is one of the 13 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_level IS NOT NULL AND grade_level NOT IN ('01', '02',
+      '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', 'k')
+    mustBe: 0
+  - type: sql
+    name: domain_in_allowed_values
+    description: domain is one of the 8 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE domain IS NOT NULL AND domain NOT IN ('comprehension_composite',
+      'listening', 'literacy_composite', 'oral_language_composite', 'overall_score_composite', 'reading',
+      'speaking', 'writing')
+    mustBe: 0
+  - type: sql
+    name: proficiency_level_in_allowed_values
+    description: proficiency_level is one of the 6 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE proficiency_level IS NOT NULL AND proficiency_level NOT
+      IN ('level_1_entering', 'level_2_emerging', 'level_3_developing', 'level_4_expanding', 'level_5_bridging',
+      'level_6_reaching')
+    mustBe: 0
+  - type: sql
+    name: num_at_proficiency_level_non_negative
+    description: num_at_proficiency_level is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_at_proficiency_level IS NOT NULL AND num_at_proficiency_level
+      < 0
+    mustBe: 0
+  - type: sql
+    name: pct_at_proficiency_level_within_unit_interval
+    description: pct_at_proficiency_level is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_at_proficiency_level IS NOT NULL AND (pct_at_proficiency_level
+      < 0 OR pct_at_proficiency_level > 1)
+    mustBe: 0
+  - type: sql
+    name: num_tested_in_domain_non_negative
+    description: num_tested_in_domain is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested_in_domain IS NOT NULL AND num_tested_in_domain
+      < 0
+    mustBe: 0
+  - type: sql
+    name: num_tested_non_negative
+    description: num_tested is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_tested IS NOT NULL AND num_tested < 0
+    mustBe: 0
+  - type: sql
+    name: enrolled_tested_rate_within_unit_interval
+    description: enrolled_tested_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE enrolled_tested_rate IS NOT NULL AND (enrolled_tested_rate
+      < 0 OR enrolled_tested_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: enrolled_tested_in_domain_rate_within_unit_interval
+    description: enrolled_tested_in_domain_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE enrolled_tested_in_domain_rate IS NOT NULL AND (enrolled_tested_in_domain_rate
+      < 0 OR enrolled_tested_in_domain_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: level_counts_sum_to_domain_denominator
+    description: The six per-level `num_at_proficiency_level` counts sum exactly to `num_tested_in_domain`
+      for every (year, grade_level, domain) group. Era 1 holds by construction (the denominator is that
+      sum); Era 2 verified against the published 2021 denominators (0 mismatches in bronze).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, grade_level, domain FROM {object} GROUP BY year, grade_level,
+      domain HAVING SUM(num_at_proficiency_level) <> MAX(num_tested_in_domain))
+    mustBe: 0
+  - type: sql
+    name: level_shares_sum_to_one
+    description: 'The six per-level `pct_at_proficiency_level` shares sum to 1.0 within 0.001 for every
+      (year, grade_level, domain) group. Verified in bronze: max deviation from 100.0 across all 8 files
+      is 2e-06 (2e-08 after scaling).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, grade_level, domain FROM {object} GROUP BY year, grade_level,
+      domain HAVING ABS(SUM(pct_at_proficiency_level) - 1.0) > 0.001)
+    mustBe: 0
+  - type: sql
+    name: count_ordering_chain
+    description: 'num_at_proficiency_level <= num_tested_in_domain <= num_tested on every row: a level
+      count cannot exceed its domain''s tested total, and a domain''s tested total cannot exceed the students
+      tested in at least one domain. Verified on all 8 bronze files: 0 violations.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (num_at_proficiency_level IS NOT NULL AND num_tested_in_domain
+      IS NOT NULL AND num_at_proficiency_level > num_tested_in_domain) OR (num_tested_in_domain IS NOT
+      NULL AND num_tested IS NOT NULL AND num_tested_in_domain > num_tested)
+    mustBe: 0
+  - type: sql
+    name: participation_rates_2021_only
+    description: '`enrolled_tested_rate` and `enrolled_tested_in_domain_rate` are populated on every 2021
+      row and NULL on every other year''s rows — the enrollment-participation metrics exist only in the
+      2021 COVID file.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE ((year = 2021) <> (enrolled_tested_rate IS NOT NULL)) OR
+      ((year = 2021) <> (enrolled_tested_in_domain_rate IS NOT NULL))
+    mustBe: 0
+  - type: sql
+    name: geography_always_null
+    description: 'Structural fact: this is a state-only topic, so `district_code` and `school_code` are
+      NULL on every row.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NOT NULL OR school_code IS NOT NULL
+    mustBe: 0
+customProperties:
+- property: title
+  value: WIDA ACCESS English-Learner Proficiency Results
+- property: summary
+  value: Statewide WIDA ACCESS English-language-proficiency results for Georgia English Learners by grade
+    and test domain, 2017-2024.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2017-2024
+- property: schema_hash
+  value: a4a845da0b3ebdee555cdca17f53815e32332cb579c34de02a61657b3223a4d4
+- property: available_years
+  value:
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

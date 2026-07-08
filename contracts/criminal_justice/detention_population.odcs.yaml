@@ -1,0 +1,845 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.detention_population
+name: detention_population
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'ICE immigration-detention population held in Georgia facilities (Stewart Detention Center,
+    the three Folkston ICE processing centers, Irwin County, Robert A. Deyton, federal prison holds, and
+    county jails with intergovernmental agreements), rolled up to the county level. Fiscal-year rows (month
+    = ''all'', FY2019 onward) carry ICE''s official average daily population (ADP) broken down three independent
+    ways — security classification level, gender x criminality, and ICE threat level — plus ADP subject
+    to mandatory detention and contractual guaranteed-minimum beds, sourced from the Deportation Data
+    Project''s collation of ICE''s detention-management workbooks and verified against the ICE workbooks
+    themselves. Monthly rows (FY2023 onward) carry monthly means of daily facility headcounts — total,
+    by gender, convicted-criminal, and possibly under 18 — computed from the Deportation Data Project''s
+    FOIA-based daily facility population panel. The year column is the FEDERAL FISCAL YEAR (October 1
+    - September 30): monthly rows for October-December fall in the prior calendar year, and each fiscal
+    year''s ''all'' row is the fiscal-year average, not a calendar-year one.'
+  usage: 'Cite both sources per the Deportation Data Project''s requirement: fiscal-year rows are ''government
+    statistics published by ICE, collated by the Deportation Data Project, and analyzed by Georgia Civic
+    Data''; monthly rows are ''government data provided by ICE in response to a FOIA request, processed
+    by the Deportation Data Project, and analyzed by Georgia Civic Data''. Filter month = ''all'' for
+    fiscal-year ADP series and month != ''all'' for the monthly series — the two families come from different
+    publications and reconcile only approximately (within about 2 percent). Remember the year column is
+    the federal fiscal year: October-December monthly rows fall in the prior calendar year.'
+  limitations: 'State rows have NULL county_fips. The year column is the FEDERAL FISCAL YEAR (Oct 1 -
+    Sep 30). The latest fiscal year is a year-to-date snapshot (its ''all'' row averages Oct 1 through
+    ICE''s latest biweekly workbook snapshot; ICE also silently revises closed years). Fiscal-year rows
+    cover the facilities ICE published each year (6-9 in Georgia); a facility ICE stopped using mid-year
+    keeps its last published fiscal-YTD value (e.g. Irwin County FY2021, absent from ICE''s end-of-year
+    workbook, is recovered from its final intra-year snapshot). Monthly rows cover FY2023 onward only
+    (the DDP daily panel starts 2022-10-01) and always include all 14 counties that ever held ICE detainees
+    in the panel — county jails with dormant agreements carry real zeros, not missing data. The FY2019
+    snapshot omits ADP for the two Folkston IPCs (guaranteed-minimum beds only). Average length of stay
+    and book-in counts are deliberately not served: neither aggregates correctly from facility publications
+    to county grain without record-level weights. No values are suppressed; NULL means ICE published no
+    value for that cell''s source.'
+tags:
+- criminal_justice
+- u.s. immigration and customs enforcement detention statistics
+- detention_population
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/detention_population/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/detention_population/**/*.parquet
+  format: parquet
+schema:
+- name: detention_population
+  logicalType: object
+  physicalType: parquet
+  physicalName: detention_population
+  description: detention_population fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, county_fips, month (geography columns are NULL at higher
+    aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: ice_detention
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - month
+  - property: key_metric
+    value: avg_daily_population
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/detention_population/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2026), counties detail
+      query: SELECT * FROM detention_population WHERE year = 2026 LIMIT 100
+    - description: Filter by month = all
+      query: SELECT * FROM detention_population WHERE month = 'all' AND year = 2026 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: 'FEDERAL FISCAL YEAR (October 1 - September 30), not the calendar year: fiscal year 2025
+      spans 2024-10-01 to 2025-09-30. All metrics — the fiscal-year ADP averages and the monthly means
+      — are keyed to this fiscal calendar. The current (latest) fiscal year is a year-to-date snapshot,
+      not a final full-year value: its ''all'' row averages October 1 through ICE''s latest workbook snapshot
+      date, and its monthly rows run through the last complete month of the DDP daily panel.'
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    - property: short_description
+      value: Federal fiscal year (October 1 of the prior calendar year through September 30).
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the county containing the detention facility
+      or facilities; FK to the counties dimension. NULL on statewide rollup rows. Stewart Detention Center
+      is 13259 (Stewart County); the three Folkston ICE processing centers roll up to 13049 (Charlton
+      County); the Atlanta federal penitentiary and hold rooms roll up to 13121 (Fulton County). A county's
+      value sums every ICE facility located in it.
+    examples:
+    - '13259'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rollup rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: month
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Calendar month as a zero-padded string ('01'-'12'), or 'all' for the fiscal-year row.
+      Months '10'-'12' belong to the fiscal year's opening quarter and therefore fall in the PRIOR calendar
+      year (year=2025, month='11' is November 2024). Monthly rows exist from FY2023 (October 2022) onward
+      — the extent of the DDP daily panel — and cover complete calendar months only (a trailing partial
+      month is dropped, e.g. March 2026 with 10 of 31 days published). Fiscal-year 'all' rows exist for
+      every year from FY2019.
+    examples:
+    - 'all'
+    enum:
+    - '01'
+    - '02'
+    - '03'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    - '09'
+    - '10'
+    - '11'
+    - '12'
+    - 'all'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Month
+    - property: short_description
+      value: Calendar month within the fiscal year ('01'-'12'), or 'all' for the fiscal-year-total row.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: avg_daily_population
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Average daily detained population, summed across the county's ICE facilities. The only
+      metric populated on both row kinds. On fiscal-year rows (month='all') it is ICE's official fiscal-YTD
+      ADP (the sum of the four gender x criminality ADP components, each of ICE's three published breakdowns
+      sums to total ADP). On monthly rows it is the monthly mean of the DDP daily panel's n_detained (distinct
+      individuals detained at any point in the day) — this definition reproduces ICE's fiscal-year ADP
+      to within about 2 percent. Values are fractional averages; never round them to headcounts.
+    examples:
+    - 2025.8
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Daily Population
+    - property: short_description
+      value: 'Average daily ICE detention population across the county''s facilities (fractional: an average,
+        not a headcount).'
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL only where ICE published no ADP for any of the county's facilities that fiscal year
+        (FY2019 Folkston IPCs).
+    - property: key_metric
+      value: true
+  - name: avg_daily_male
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Monthly mean of the daily count of detained people ICE records as male. Populated on
+      monthly rows only (which begin October 2022 = FY2023, when the DDP daily panel starts); NULL on
+      fiscal-year rows (month = 'all'). avg_daily_male + avg_daily_female can fall slightly short of avg_daily_population
+      (gender occasionally unrecorded); it never exceeds it.
+    examples:
+    - 1758.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Daily Male
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on monthly rows only (which begin October 2022 = FY2023, when the DDP daily panel
+        starts); NULL on fiscal-year rows (month = 'all').
+  - name: avg_daily_female
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Monthly mean of the daily count of detained people ICE records as female. Populated on
+      monthly rows only (which begin October 2022 = FY2023, when the DDP daily panel starts); NULL on
+      fiscal-year rows (month = 'all').
+    examples:
+    - 155.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Daily Female
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on monthly rows only (which begin October 2022 = FY2023, when the DDP daily panel
+        starts); NULL on fiscal-year rows (month = 'all').
+  - name: avg_daily_convicted_criminal
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Monthly mean of the daily count of detained people with a criminal conviction (ICE's
+      classification). Populated on monthly rows only (which begin October 2022 = FY2023, when the DDP
+      daily panel starts); NULL on fiscal-year rows (month = 'all').
+    examples:
+    - 590.2
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Daily Convicted Criminal
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on monthly rows only (which begin October 2022 = FY2023, when the DDP daily panel
+        starts); NULL on fiscal-year rows (month = 'all').
+  - name: avg_daily_possibly_under_18
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Monthly mean of the daily count of detained people DDP flags as possibly under 18 (based
+      on recorded birth year). Near zero at Georgia facilities. Populated on monthly rows only (which
+      begin October 2022 = FY2023, when the DDP daily panel starts); NULL on fiscal-year rows (month =
+      'all').
+    examples:
+    - 0.1
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Daily Possibly Under 18
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on monthly rows only (which begin October 2022 = FY2023, when the DDP daily panel
+        starts); NULL on fiscal-year rows (month = 'all').
+  - name: adp_security_level_a
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees classified at security level A (lowest custody level of ICE's A-D classification).
+      Fiscal-YTD average daily population — fractional by construction (person-days divided by days elapsed
+      in the fiscal year). For a facility ICE stopped using mid-year, the value is ICE's last published
+      fiscal-YTD average for that year.
+    examples:
+    - 1022.4
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Security Level a
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_security_level_b
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees classified at security level B. Fiscal-YTD average daily population
+      — fractional by construction (person-days divided by days elapsed in the fiscal year). For a facility
+      ICE stopped using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 300.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Security Level B
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_security_level_c
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees classified at security level C. Fiscal-YTD average daily population
+      — fractional by construction (person-days divided by days elapsed in the fiscal year). For a facility
+      ICE stopped using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 350.9
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Security Level C
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_security_level_d
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees classified at security level D (highest custody level). Fiscal-YTD average
+      daily population — fractional by construction (person-days divided by days elapsed in the fiscal
+      year). For a facility ICE stopped using mid-year, the value is ICE's last published fiscal-YTD average
+      for that year.
+    examples:
+    - 352.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Security Level D
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_male_criminal
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of male detainees with a criminal conviction (ICE's 'Male Crim' category). Fiscal-YTD
+      average daily population — fractional by construction (person-days divided by days elapsed in the
+      fiscal year). For a facility ICE stopped using mid-year, the value is ICE's last published fiscal-YTD
+      average for that year.
+    examples:
+    - 539.4
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Male Criminal
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_male_noncriminal
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of male detainees without a criminal conviction. Fiscal-YTD average daily population
+      — fractional by construction (person-days divided by days elapsed in the fiscal year). For a facility
+      ICE stopped using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 1161.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Male Noncriminal
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_female_criminal
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of female detainees with a criminal conviction. Fiscal-YTD average daily population
+      — fractional by construction (person-days divided by days elapsed in the fiscal year). For a facility
+      ICE stopped using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 57.4
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Female Criminal
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_female_noncriminal
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of female detainees without a criminal conviction. The four gender x criminality
+      components sum to avg_daily_population on fiscal-year rows. Fiscal-YTD average daily population
+      — fractional by construction (person-days divided by days elapsed in the fiscal year). For a facility
+      ICE stopped using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 267.7
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Female Noncriminal
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_threat_level_1
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees at ICE threat level 1 (highest-priority criminal history under ICE's
+      1-3 scheme). Fiscal-YTD average daily population — fractional by construction (person-days divided
+      by days elapsed in the fiscal year). For a facility ICE stopped using mid-year, the value is ICE's
+      last published fiscal-YTD average for that year.
+    examples:
+    - 200.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Threat Level 1
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_threat_level_2
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees at ICE threat level 2. Fiscal-YTD average daily population — fractional
+      by construction (person-days divided by days elapsed in the fiscal year). For a facility ICE stopped
+      using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 120.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Threat Level 2
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_threat_level_3
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees at ICE threat level 3. Fiscal-YTD average daily population — fractional
+      by construction (person-days divided by days elapsed in the fiscal year). For a facility ICE stopped
+      using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 150.7
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Threat Level 3
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_no_threat_level
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees with no ICE threat level (no known criminal history). The four threat-level
+      components sum to avg_daily_population on fiscal-year rows. Fiscal-YTD average daily population
+      — fractional by construction (person-days divided by days elapsed in the fiscal year). For a facility
+      ICE stopped using mid-year, the value is ICE's last published fiscal-YTD average for that year.
+    examples:
+    - 1554.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp No Threat Level
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: adp_mandatory_detention
+    logicalType: number
+    physicalType: double
+    required: false
+    description: ADP of detainees subject to mandatory detention (a subset of total ADP, not a member
+      of a partition). Fiscal-YTD average daily population — fractional by construction (person-days divided
+      by days elapsed in the fiscal year). For a facility ICE stopped using mid-year, the value is ICE's
+      last published fiscal-YTD average for that year.
+    examples:
+    - 1345.7
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Adp Mandatory Detention
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: Populated on fiscal-year rows (month = 'all') only; NULL on monthly rows. Also NULL where
+        ICE did not publish the facility's breakdown (the FY2019 snapshot omits ADP for the two Folkston
+        IPCs).
+  - name: guaranteed_minimum_beds
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Contractual guaranteed-minimum beds (the bed floor ICE pays for regardless of occupancy),
+      summed over the county's facilities that have one. Fiscal-year rows only. Not a population count
+      — compare with avg_daily_population to gauge contract utilization.
+    examples:
+    - 1600
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Guaranteed Minimum Beds
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when no facility in the county has a contractual guaranteed-minimum bed count that fiscal
+        year (ICE publishes a blank or placeholder), and on all monthly rows.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: month_in_allowed_values
+    description: month is one of the 13 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE month IS NOT NULL AND month NOT IN ('01', '02', '03', '04',
+      '05', '06', '07', '08', '09', '10', '11', '12', 'all')
+    mustBe: 0
+  - type: sql
+    name: avg_daily_population_non_negative
+    description: avg_daily_population is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_daily_population IS NOT NULL AND avg_daily_population
+      < 0
+    mustBe: 0
+  - type: sql
+    name: avg_daily_male_non_negative
+    description: avg_daily_male is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_daily_male IS NOT NULL AND avg_daily_male < 0
+    mustBe: 0
+  - type: sql
+    name: avg_daily_female_non_negative
+    description: avg_daily_female is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_daily_female IS NOT NULL AND avg_daily_female < 0
+    mustBe: 0
+  - type: sql
+    name: avg_daily_convicted_criminal_non_negative
+    description: avg_daily_convicted_criminal is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_daily_convicted_criminal IS NOT NULL AND avg_daily_convicted_criminal
+      < 0
+    mustBe: 0
+  - type: sql
+    name: avg_daily_possibly_under_18_non_negative
+    description: avg_daily_possibly_under_18 is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE avg_daily_possibly_under_18 IS NOT NULL AND avg_daily_possibly_under_18
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_security_level_a_non_negative
+    description: adp_security_level_a is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_security_level_a IS NOT NULL AND adp_security_level_a
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_security_level_b_non_negative
+    description: adp_security_level_b is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_security_level_b IS NOT NULL AND adp_security_level_b
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_security_level_c_non_negative
+    description: adp_security_level_c is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_security_level_c IS NOT NULL AND adp_security_level_c
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_security_level_d_non_negative
+    description: adp_security_level_d is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_security_level_d IS NOT NULL AND adp_security_level_d
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_male_criminal_non_negative
+    description: adp_male_criminal is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_male_criminal IS NOT NULL AND adp_male_criminal < 0
+    mustBe: 0
+  - type: sql
+    name: adp_male_noncriminal_non_negative
+    description: adp_male_noncriminal is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_male_noncriminal IS NOT NULL AND adp_male_noncriminal
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_female_criminal_non_negative
+    description: adp_female_criminal is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_female_criminal IS NOT NULL AND adp_female_criminal
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_female_noncriminal_non_negative
+    description: adp_female_noncriminal is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_female_noncriminal IS NOT NULL AND adp_female_noncriminal
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_threat_level_1_non_negative
+    description: adp_threat_level_1 is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_threat_level_1 IS NOT NULL AND adp_threat_level_1 <
+      0
+    mustBe: 0
+  - type: sql
+    name: adp_threat_level_2_non_negative
+    description: adp_threat_level_2 is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_threat_level_2 IS NOT NULL AND adp_threat_level_2 <
+      0
+    mustBe: 0
+  - type: sql
+    name: adp_threat_level_3_non_negative
+    description: adp_threat_level_3 is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_threat_level_3 IS NOT NULL AND adp_threat_level_3 <
+      0
+    mustBe: 0
+  - type: sql
+    name: adp_no_threat_level_non_negative
+    description: adp_no_threat_level is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_no_threat_level IS NOT NULL AND adp_no_threat_level
+      < 0
+    mustBe: 0
+  - type: sql
+    name: adp_mandatory_detention_non_negative
+    description: adp_mandatory_detention is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE adp_mandatory_detention IS NOT NULL AND adp_mandatory_detention
+      < 0
+    mustBe: 0
+  - type: sql
+    name: guaranteed_minimum_beds_non_negative
+    description: guaranteed_minimum_beds is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE guaranteed_minimum_beds IS NOT NULL AND guaranteed_minimum_beds
+      < 0
+    mustBe: 0
+  - type: sql
+    name: monthly_metrics_null_on_fiscal_year_rows
+    description: The daily-panel metric family exists only on monthly rows — every fiscal-year ('all')
+      row must carry NULL for all four monthly-only metrics.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE month = 'all' AND (avg_daily_male IS NOT NULL OR avg_daily_female
+      IS NOT NULL OR avg_daily_convicted_criminal IS NOT NULL OR avg_daily_possibly_under_18 IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: fiscal_year_metrics_null_on_monthly_rows
+    description: The ICE workbook ADP breakdowns are fiscal-year values — every monthly row must carry
+      NULL for all fourteen fiscal-year-only metrics.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE month != 'all' AND (adp_security_level_a IS NOT NULL OR
+      adp_security_level_b IS NOT NULL OR adp_security_level_c IS NOT NULL OR adp_security_level_d IS
+      NOT NULL OR adp_male_criminal IS NOT NULL OR adp_male_noncriminal IS NOT NULL OR adp_female_criminal
+      IS NOT NULL OR adp_female_noncriminal IS NOT NULL OR adp_threat_level_1 IS NOT NULL OR adp_threat_level_2
+      IS NOT NULL OR adp_threat_level_3 IS NOT NULL OR adp_no_threat_level IS NOT NULL OR adp_mandatory_detention
+      IS NOT NULL OR guaranteed_minimum_beds IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: monthly_rows_start_fy2023
+    description: 'Monthly rows exist only from FY2023 (the DDP daily panel starts 2022-10-01, which is
+      fiscal year 2023) — guards the October-December fiscal-year attribution: a regression in the +1
+      FY logic would land Oct-Dec 2022 rows at year=2022.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE month != 'all' AND year < 2023
+    mustBe: 0
+  - type: sql
+    name: adp_gender_criminality_partition_sums_to_total
+    description: ICE's gender x criminality breakdown partitions total ADP — the four components must
+      sum to avg_daily_population on fiscal-year rows (tolerance 0.05 for float aggregation).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE month = 'all' AND avg_daily_population IS NOT NULL AND
+      adp_male_criminal IS NOT NULL AND adp_male_noncriminal IS NOT NULL AND adp_female_criminal IS NOT
+      NULL AND adp_female_noncriminal IS NOT NULL AND ABS(adp_male_criminal + adp_male_noncriminal + adp_female_criminal
+      + adp_female_noncriminal - avg_daily_population) > 0.05
+    mustBe: 0
+  - type: sql
+    name: adp_security_level_partition_sums_to_total
+    description: ICE's security-level breakdown partitions total ADP — levels A-D must sum to avg_daily_population
+      on fiscal-year rows (verified to 1e-6 at the facility level; tolerance 0.05 after county/state aggregation).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE month = 'all' AND avg_daily_population IS NOT NULL AND
+      adp_security_level_a IS NOT NULL AND adp_security_level_b IS NOT NULL AND adp_security_level_c IS
+      NOT NULL AND adp_security_level_d IS NOT NULL AND ABS(adp_security_level_a + adp_security_level_b
+      + adp_security_level_c + adp_security_level_d - avg_daily_population) > 0.05
+    mustBe: 0
+  - type: sql
+    name: adp_threat_level_partition_sums_to_total
+    description: ICE's threat-level breakdown partitions total ADP — levels 1-3 plus no-threat-level must
+      sum to avg_daily_population on fiscal-year rows (tolerance 0.05).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE month = 'all' AND avg_daily_population IS NOT NULL AND
+      adp_threat_level_1 IS NOT NULL AND adp_threat_level_2 IS NOT NULL AND adp_threat_level_3 IS NOT
+      NULL AND adp_no_threat_level IS NOT NULL AND ABS(adp_threat_level_1 + adp_threat_level_2 + adp_threat_level_3
+      + adp_no_threat_level - avg_daily_population) > 0.05
+    mustBe: 0
+  - type: sql
+    name: adp_mandatory_within_total
+    description: Detainees subject to mandatory detention are a subset of the detained population — adp_mandatory_detention
+      can never exceed avg_daily_population.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE month = 'all' AND adp_mandatory_detention IS NOT NULL AND
+      avg_daily_population IS NOT NULL AND adp_mandatory_detention > avg_daily_population + 0.05
+    mustBe: 0
+  - type: sql
+    name: monthly_gender_split_within_total
+    description: The daily panel's gender counts never exceed the total (they can fall slightly short
+      when gender is unrecorded) — avg_daily_male + avg_daily_female must not exceed avg_daily_population
+      on monthly rows.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE month != 'all' AND avg_daily_male IS NOT NULL AND avg_daily_female
+      IS NOT NULL AND avg_daily_population IS NOT NULL AND avg_daily_male + avg_daily_female > avg_daily_population
+      + 0.01
+    mustBe: 0
+  - type: sql
+    name: monthly_subset_metrics_within_total
+    description: Convicted-criminal and possibly-under-18 counts are subsets of the detained population
+      — neither monthly mean can exceed avg_daily_population.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE month != 'all' AND avg_daily_population IS NOT NULL AND
+      ((avg_daily_convicted_criminal IS NOT NULL AND avg_daily_convicted_criminal > avg_daily_population
+      + 0.01) OR (avg_daily_possibly_under_18 IS NOT NULL AND avg_daily_possibly_under_18 > avg_daily_population
+      + 0.01))
+    mustBe: 0
+  - type: sql
+    name: state_adp_equals_sum_of_counties
+    description: Statewide rows are built by summing the county rows — the state avg_daily_population
+      must equal the county sum for every (year, month) (tolerance 0.01 for float re-aggregation).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN avg_daily_population
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN avg_daily_population END) AS county_sum
+      FROM {object} GROUP BY year, month) WHERE state_total IS NOT NULL AND county_sum IS NOT NULL AND
+      ABS(state_total - county_sum) > 0.01
+    mustBe: 0
+customProperties:
+- property: title
+  value: ICE Detention Population by County
+- property: summary
+  value: Average daily ICE detention population in Georgia facilities by county, per federal fiscal year
+    and month, with security, criminality, and threat-level breakdowns.
+- property: source
+  value: U.S. Immigration and Customs Enforcement detention statistics (via the Deportation Data Project)
+- property: source_url
+  value: https://www.ice.gov/detain/detention-management
+- property: update_frequency
+  value: biweekly (ICE workbook snapshots); irregular (DDP releases)
+- property: year_range
+  value: 2019-2026
+- property: schema_hash
+  value: 1fa3b1218a4c4b01a7f5d927f390ba85882880e935fd2eb29b4edd50ada546e4
+- property: available_years
+  value:
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+- property: year_gaps
+  value: []

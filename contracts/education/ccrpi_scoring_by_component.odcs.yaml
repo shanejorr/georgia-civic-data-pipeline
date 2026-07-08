@@ -1,0 +1,615 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.ccrpi_scoring_by_component
+name: ccrpi_scoring_by_component
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Components of Georgia''s College and Career Ready Performance Index (CCRPI) accountability
+    score at the school, district, and state level by grade cluster (elementary / middle / high), 2012-2025
+    (no 2020-2021 — COVID pause). The metric set evolves across four source eras: 2012-2017 publish CCRPI
+    component POINTS on per-component scales (achievement, progress, achievement gap, ED/EL/SWD performance,
+    ETB and challenge bonus points); 2018+ publish five component SCORES on a 0-100 scale (content mastery,
+    progress, closing gaps, readiness, graduation rate). The aggregated ccrpi_score and ccrpi_single_score
+    accompany 2012-2019 (suppressed for 2022, dropped at source from 2023). Points-era and score-era metrics
+    are different measurements on different scales — each column is populated only in its source era and
+    the two families are NOT comparable. No demographic breakdown. This is the CCRPI OVERVIEW / SCORECARD
+    topic — the most important CCRPI entry point and the only single-query view of a school''s accountability
+    picture: the SOLE source of the overall ccrpi_single_score and the per-cluster ccrpi_score, the only
+    topic presenting all five component scores side by side, and the only home of the 2012-2017 points-era
+    breakdown. It differs from the per-component topics (ccrpi_content_mastery, ccrpi_progress, ccrpi_readiness,
+    ccrpi_graduation_rate) by being WIDE and SHALLOW — one rolled-up score per component at the all-student
+    / grade-cluster grain, with no demographic, subject, indicator, or sub-indicator axis. Those topics
+    are the complementary NARROW and DEEP view, each drilling a single component down by demographic and
+    sub-measure but publishing neither the overall score nor the cross-component scorecard. Use this topic
+    for the headline score and the component scorecard; use a component topic for within-component detail.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- ccrpi_scoring_by_component
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/ccrpi_scoring_by_component/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/ccrpi_scoring_by_component/**/*.parquet
+  format: parquet
+schema:
+- name: ccrpi_scoring_by_component
+  logicalType: object
+  physicalType: parquet
+  physicalName: ccrpi_scoring_by_component
+  description: ccrpi_scoring_by_component fact table, year-partitioned Parquet (split by detail level
+    where present).
+  dataGranularityDescription: One row per year, district_code, school_code, grade_cluster (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - grade_cluster
+  - property: key_metric
+    value: ccrpi_single_score
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/ccrpi_scoring_by_component/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2025), schools detail
+      query: SELECT * FROM ccrpi_scoring_by_component WHERE year = 2025 LIMIT 100
+    - description: District 601 in 2025
+      query: SELECT * FROM ccrpi_scoring_by_component WHERE district_code = '601' AND year = 2025 LIMIT
+        100
+    - description: Filter by grade_cluster = elementary
+      query: SELECT * FROM ccrpi_scoring_by_component WHERE grade_cluster = 'elementary' AND year = 2025
+        LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: 'Ending calendar year of the school year (e.g., 2024 = 2023-2024). 2020 and 2021 are
+      absent: Georgia paused CCRPI calculation during the COVID pandemic. Verified against each file''s
+      in-file School Year column.'
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state-charter
+      / state-school operators; the allowlisted pseudo-district code `RTC` (Residential Treatment Center
+      aggregate, 2015-2017 only, district-level rows). NULL for state-level rows. FK to the districts
+      dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded; 2017 and 2024 bronze ship un-padded values that
+      zfill repairs). NULL for district- and state-level rows. FK to the schools dimension (composite
+      key with district_code).
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: grade_cluster
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'CCRPI grade cluster: `elementary`, `middle`, or `high` (bronze single letters E/M/H
+      recoded). Every entity is reported once per cluster it serves; a K-12 school appears in up to three
+      rows per year.'
+    examples:
+    - 'elementary'
+    enum:
+    - 'elementary'
+    - 'high'
+    - 'middle'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Cluster
+    - property: short_description
+      value: 'Grade band the row covers: elementary, middle, or high (a K-12 school appears in up to three
+        rows per year).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: achievement_points
+    logicalType: number
+    physicalType: double
+    required: false
+    description: CCRPI Achievement points (points era 2012-2017 only; observed range 2.6-59.9, max ~60
+      by design). NULL for all 2018+ rows. Co-null with etb_points and challenge_points on every points-era
+      row (enforced as a quality check).
+    examples:
+    - 45.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Achievement Points
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`), or a score-era row (2018+) where this points metric no longer
+        exists.
+  - name: progress_points
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'CCRPI Progress points (points era 2012-2017 only). CAVEAT: the Progress component was
+      redesigned for 2015 — max ~22 in 2012-2014 vs max 40 in 2015-2017 — under the same bronze column;
+      values are preserved verbatim, so period-over-period comparisons must stay within one sub-era. NULL
+      for all 2018+ rows.'
+    examples:
+    - 17.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Progress Points
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`) or true-null (entities without measurable progress, e.g. new
+        schools), or a score-era row (2018+).
+  - name: achievement_gap_points
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'CCRPI Achievement Gap points (points era 2012-2017 only). Cap changed mid-era: max 15
+      in 2012-2014, max 10 in 2015-2017 (verified per year in bronze). NULL for all 2018+ rows.'
+    examples:
+    - 11.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Achievement Gap Points
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`) or true-null, or a score-era row (2018+).
+  - name: ed_el_swd_performance
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Economically Disadvantaged / English Learner / Students With Disabilities subgroup performance
+      points (points era 2012-2017 only; range 0-10). The points-era predecessor of the score-era closing_gaps
+      subgroup component — measured on a different scale and NOT comparable to it. NULL for all 2018+
+      rows.
+    examples:
+    - 3.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Ed EL Swd Performance
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`) or true-null (2013 ships 82 blank cells), or a score-era row
+        (2018+).
+  - name: etb_points
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Exceeding the Bar bonus points (points era 2012-2017 only). Cap drifts by framework:
+      max 2.0 in 2012-2013, 3.0 in 2014, 2.5 in 2015-2017. NULL for all 2018+ rows.'
+    examples:
+    - 1.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Etb Points
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`), or a score-era row (2018+).
+  - name: challenge_points
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Challenge bonus points (points era 2012-2017 only; range 0-10): the bonus bucket added
+      on top of the three base components, predominantly ED/EL/SWD performance + ETB points. Participates
+      in the exact identity achievement_points + progress_points + achievement_gap_points + challenge_points
+      = ccrpi_score (0 violations source-wide; enforced as a quality check). NULL for all 2018+ rows.'
+    examples:
+    - 3.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Challenge Points
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`), or a score-era row (2018+).
+  - name: content_mastery
+    logicalType: number
+    physicalType: double
+    required: false
+    description: CCRPI Content Mastery component score, 0-100 scale (score columns are exempt from the
+      0-1 percentage convention; components are capped at 100 by GaDOE rules — verified [0, 100] in every
+      year). Score era (2018+) only; NULL for all 2012-2017 rows.
+    examples:
+    - 68.4
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Content Mastery
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Suppressed at source (`NA`, `TFS`, `Too Few Students`), or a points-era row (2012-2017).
+  - name: progress
+    logicalType: number
+    physicalType: double
+    required: false
+    description: CCRPI Progress component score, 0-100 scale. Score era (2018+) only; NULL for all 2012-2017
+      rows and 100% NULL in 2022 (federally-approved one-year COVID modification suspended the component;
+      bronze ships blanket `NA`).
+    examples:
+    - 72.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Progress
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Suppressed at source (`NA`, `TFS`), the 2022 component-wide COVID suspension, or a points-era
+        row (2012-2017).
+  - name: closing_gaps
+    logicalType: number
+    physicalType: double
+    required: false
+    description: CCRPI Closing Gaps component score, 0-100 scale — the score-era successor of the points-era
+      ed_el_swd_performance subgroup metric (different scale, not comparable). Score era (2018+) only;
+      NULL for all 2012-2017 rows and 100% NULL in 2022 (COVID modification).
+    examples:
+    - 54.1
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Closing Gaps
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Suppressed at source (literal `NA` markers — 196/228/207 cells in 2023/2024/2025, zero blank
+        cells), the 2022 component-wide COVID suspension, or a points-era row (2012-2017).
+  - name: readiness
+    logicalType: number
+    physicalType: double
+    required: false
+    description: CCRPI Readiness component score, 0-100 scale. Score era (2018+) only; NULL for all 2012-2017
+      rows. The only score component published for every cluster in 2022.
+    examples:
+    - 77.0
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Readiness
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Suppressed at source (`NA`, `TFS`, `Too Few Students`), or a points-era row (2012-2017).
+  - name: graduation_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: CCRPI Graduation Rate component on the 0-1 decimal scale (bronze ships 0-100; divided
+      by 100 per the rate-column standard — the only rescaled column in this topic). Score era (2018+)
+      only, and non-NULL exclusively on `high` grade-cluster rows in every year (verified; enforced as
+      a quality check).
+    examples:
+    - 0.813
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Graduation Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Not a high-cluster row (elementary / middle have no graduation rate), suppressed at source
+        (`NA`, `TFS`, `Too Few Students`), or a points-era row (2012-2017).
+  - name: ccrpi_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Aggregated per-cluster CCRPI score on a 0-100 scale. Legitimately exceeds 100 in the
+      points era via ETB / Challenge bonus points (observed max 110.3 in 2016; by design, not capped —
+      hence no contract bounds). In the points era it equals achievement_points + progress_points + achievement_gap_points
+      + challenge_points exactly (quality-checked). Published 2012-2019; 100% NULL for 2022 (COVID modification)
+      and 2023+ (column dropped at source).
+    examples:
+    - 74.2
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: CCRPI Score
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`), the 2022 COVID suppression, or a 2023+ row where the source
+        dropped the column.
+  - name: ccrpi_single_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Single (overall) CCRPI score of the entity — the cross-cluster rollup, so an entity spanning
+      multiple clusters repeats one value across its rows while ccrpi_score varies per cluster. 0-100
+      scale with points-era bonus overshoot (observed max 110.3 in 2016). Published 2012-2019; 100% NULL
+      for 2022 and 2023+ (same coverage as ccrpi_score).
+    examples:
+    - 74.2
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: CCRPI Single Score
+    - property: short_description
+      value: The entity's overall CCRPI accountability score on a 0-100 scale; published 2012-2019, NULL
+        from 2022 on.
+    - property: unit
+      value: score
+    - property: null_meaning
+      value: Suppressed at source (`NA`), the 2022 COVID suppression, or a 2023+ row where the source
+        dropped the column.
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: grade_cluster_in_allowed_values
+    description: grade_cluster is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_cluster IS NOT NULL AND grade_cluster NOT IN ('elementary',
+      'high', 'middle')
+    mustBe: 0
+  - type: sql
+    name: content_mastery_within_range
+    description: content_mastery is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE content_mastery IS NOT NULL AND (content_mastery < 0 OR
+      content_mastery > 100)
+    mustBe: 0
+  - type: sql
+    name: progress_within_range
+    description: progress is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE progress IS NOT NULL AND (progress < 0 OR progress > 100)
+    mustBe: 0
+  - type: sql
+    name: closing_gaps_within_range
+    description: closing_gaps is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE closing_gaps IS NOT NULL AND (closing_gaps < 0 OR closing_gaps
+      > 100)
+    mustBe: 0
+  - type: sql
+    name: readiness_within_range
+    description: readiness is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE readiness IS NOT NULL AND (readiness < 0 OR readiness >
+      100)
+    mustBe: 0
+  - type: sql
+    name: graduation_rate_within_unit_interval
+    description: graduation_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE graduation_rate IS NOT NULL AND (graduation_rate < 0 OR
+      graduation_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: points_metrics_null_in_score_era
+    description: 'Structural: the six points-era metrics (achievement/progress/achievement-gap/ED-EL-SWD/ETB/challenge
+      points) ceased publication with the 2018 CCRPI redesign — bronze 2018+ does not carry the columns,
+      so every 2018+ row must be NULL on all six.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year >= 2018 AND (achievement_points IS NOT NULL OR progress_points
+      IS NOT NULL OR achievement_gap_points IS NOT NULL OR ed_el_swd_performance IS NOT NULL OR etb_points
+      IS NOT NULL OR challenge_points IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: score_metrics_null_in_points_era
+    description: 'Structural: the five score-era components (content mastery, progress, closing gaps,
+      readiness, graduation rate) were introduced by the 2018 CCRPI redesign — bronze 2012-2017 does not
+      carry the columns, so every 2012-2017 row must be NULL on all five.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year <= 2017 AND (content_mastery IS NOT NULL OR progress
+      IS NOT NULL OR closing_gaps IS NOT NULL OR readiness IS NOT NULL OR graduation_rate IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: aggregate_scores_null_from_2022
+    description: 'ccrpi_score and ccrpi_single_score end with 2019: the 2022 file ships both as blanket
+      `NA` (COVID modification) and 2023+ files drop the columns entirely — every year >= 2022 row must
+      be NULL on both.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year >= 2022 AND (ccrpi_score IS NOT NULL OR ccrpi_single_score
+      IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: covid_2022_progress_closing_gaps_null
+    description: The federally-approved one-year COVID modification suspended the Progress and Closing
+      Gaps components for 2022 — bronze ships blanket `NA`, so every 2022 row must be NULL on both.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year = 2022 AND (progress IS NOT NULL OR closing_gaps IS
+      NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: single_score_constant_within_entity_year
+    description: 'ccrpi_single_score is an entity-level value repeated across an entity''s grade-cluster
+      rows — within (year, district_code, school_code) every non-NULL ccrpi_single_score must be identical.
+      Verified: 0 violations across 19,303 entity-years.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code FROM {object} WHERE ccrpi_single_score
+      IS NOT NULL GROUP BY year, district_code, school_code HAVING COUNT(DISTINCT ccrpi_single_score)
+      > 1)
+    mustBe: 0
+  - type: sql
+    name: points_era_components_sum_to_ccrpi_score
+    description: 'Component reconciliation, points era: ccrpi_score = achievement_points + progress_points
+      + achievement_gap_points + challenge_points wherever all five are published. Verified EXACT in bronze
+      (max |diff| 0.0, 0 violations across 2012-2017); 0.05 tolerance covers float representation only.
+      Not applicable to the score era, where ccrpi_score is a weighted (not additive) combination.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE year <= 2017 AND achievement_points IS NOT NULL AND progress_points
+      IS NOT NULL AND achievement_gap_points IS NOT NULL AND challenge_points IS NOT NULL AND ccrpi_score
+      IS NOT NULL AND ABS(achievement_points + progress_points + achievement_gap_points + challenge_points
+      - ccrpi_score) > 0.05
+    mustBe: 0
+  - type: sql
+    name: points_era_achievement_etb_challenge_co_null
+    description: 'Co-null trio, points era: achievement_points, etb_points, and challenge_points are suppressed
+      together or published together on every 2012-2017 row (verified: 0 row-level mismatches in all six
+      years).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year <= 2017 AND ((achievement_points IS NULL) <> (etb_points
+      IS NULL) OR (achievement_points IS NULL) <> (challenge_points IS NULL))
+    mustBe: 0
+  - type: sql
+    name: graduation_rate_high_cluster_only
+    description: 'Structural: GaDOE publishes the CCRPI Graduation Rate component only on high-cluster
+      rows — verified in every score-era year (elementary/middle rows ship `NA` without exception, including
+      K-12 entities, whose rate lands on their `high` row).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE graduation_rate IS NOT NULL AND grade_cluster <> 'high'
+    mustBe: 0
+customProperties:
+- property: title
+  value: CCRPI Scores and Components
+- property: summary
+  value: Georgia's overall CCRPI accountability score plus its component scores, by school, district,
+    and state and grade cluster, 2012-2025.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2012-2025
+- property: schema_hash
+  value: f645754de4375353548b0277aa3d05a986ea906620d6d72ded655ddfe07739f0
+- property: available_years
+  value:
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value:
+  - 2020
+  - 2021

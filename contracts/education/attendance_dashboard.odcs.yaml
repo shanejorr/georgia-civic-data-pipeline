@@ -1,0 +1,389 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.attendance_dashboard
+name: attendance_dashboard
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Georgia Insights (GaDOE) Attendance Dashboard. For every Georgia public school, school district,
+    and the state as a whole, reports three absenteeism metrics — the chronic absenteeism rate (share
+    of students absent 10% or more of their enrolled days), the average daily absenteeism rate, and the
+    average daily attendance rate — plus the enrollment denominator, broken out by grade level (kindergarten
+    through grade 12) and by demographic subgroup (race/ethnicity with the combined `asian_pacific_islander`
+    bucket, gender, students with/without disabilities, economically disadvantaged, English learners,
+    homeless, and migrant). Coverage spans the 2017-18 school year (year 2018) through the 2024-25 school
+    year (year 2025) — 8 files, no gap years.
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- attendance_dashboard
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/attendance_dashboard/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/attendance_dashboard/**/*.parquet
+  format: parquet
+schema:
+- name: attendance_dashboard
+  logicalType: object
+  physicalType: parquet
+  physicalName: attendance_dashboard
+  description: attendance_dashboard fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+  - property: key_metric
+    value: chronically_absent_rate
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/attendance_dashboard/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), schools detail
+      query: SELECT * FROM attendance_dashboard WHERE year = 2025 LIMIT 100
+    - description: District 601 in 2025
+      query: SELECT * FROM attendance_dashboard WHERE district_code = '601' AND year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (2025 = 2024-2025). Sourced from the bronze `School
+      Year` column, cross-checked against the filename year.
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state-charter
+      / state-specialty systems. NULL for state-level aggregate rows. FK to districts dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded; bronze strips the leading zero from some codes).
+      NULL for district- and state-level aggregate rows. FK to schools dimension (composite key with district_code).
+    examples:
+    - '0618'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Canonical demographic code (FK to demographics dimension). `all` is the unfiltered total;
+      grade levels are encoded INSIDE this column (`kindergarten`, `grade_1`..`grade_12`) per the grade-in-demographic
+      policy — there is no separate grade_level axis; race uses the combined `asian_pacific_islander`
+      bucket (pre-1997 OMB 6-bucket convention — the source never publishes separate Asian or Pacific
+      Islander rows); plus gender (`male`/`female`) and special-population codes. Values are mutually
+      exclusive within a category; `all` overlaps every category.
+    examples:
+    - 'black'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'female'
+    - 'grade_1'
+    - 'grade_10'
+    - 'grade_11'
+    - 'grade_12'
+    - 'grade_2'
+    - 'grade_3'
+    - 'grade_4'
+    - 'grade_5'
+    - 'grade_6'
+    - 'grade_7'
+    - 'grade_8'
+    - 'grade_9'
+    - 'hispanic'
+    - 'homeless'
+    - 'kindergarten'
+    - 'male'
+    - 'migrant'
+    - 'multiracial'
+    - 'native_american'
+    - 'students_with_disabilities'
+    - 'students_without_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Which student group the row covers - `all`, a grade level (kindergarten through grade 12),
+        a race, a gender, or a special population.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_students
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Enrollment denominator for this (entity, demographic) cell — the number of students the
+      three rate columns are computed over. Never suppressed in source (always populated, even on rows
+      whose rates are suppressed).
+    examples:
+    - 913
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Students
+    - property: unit
+      value: count
+    - property: metric_component
+      value: denominator
+  - name: chronically_absent_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of students absent 10% or more of their enrolled days (the federal chronic-absenteeism
+      definition). 0-1 decimal scale, as published — no rescaling applied. NULL when suppressed.
+    examples:
+    - 0.284
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Chronically Absent Rate
+    - property: short_description
+      value: Share of students absent 10% or more of their enrolled days, on a 0-1 scale; NULL when suppressed.
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GaDOE (`TFS` — Too Few Students). Suppression is all-or-nothing across the
+        three rate columns.
+    - property: key_metric
+      value: true
+  - name: average_daily_absenteeism_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Total absent-days divided by total enrolled-days. 0-1 decimal scale, as published. The
+      complement of average_daily_attendance_rate. NULL when suppressed.
+    examples:
+    - 0.081
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Daily Absenteeism Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GaDOE (`TFS` — Too Few Students). Suppression is all-or-nothing across the
+        three rate columns.
+  - name: average_daily_attendance_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Total present-days divided by total enrolled-days (Average Daily Attendance, a fixed
+      term of art in school reporting). 0-1 decimal scale, as published. Equals 1 - average_daily_absenteeism_rate
+      within 0.001 (independent rounding of each rate to 3 decimals); preserved so analysts need not recompute.
+      NULL when suppressed.
+    examples:
+    - 0.919
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Average Daily Attendance Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Suppressed by GaDOE (`TFS` — Too Few Students). Suppression is all-or-nothing across the
+        three rate columns.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 28 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'economically_disadvantaged', 'english_learners', 'female', 'grade_1',
+      'grade_10', 'grade_11', 'grade_12', 'grade_2', 'grade_3', 'grade_4', 'grade_5', 'grade_6', 'grade_7',
+      'grade_8', 'grade_9', 'hispanic', 'homeless', 'kindergarten', 'male', 'migrant', 'multiracial',
+      'native_american', 'students_with_disabilities', 'students_without_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: num_students_non_negative
+    description: num_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 0
+    mustBe: 0
+  - type: sql
+    name: chronically_absent_rate_within_unit_interval
+    description: chronically_absent_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE chronically_absent_rate IS NOT NULL AND (chronically_absent_rate
+      < 0 OR chronically_absent_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: average_daily_absenteeism_rate_within_unit_interval
+    description: average_daily_absenteeism_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE average_daily_absenteeism_rate IS NOT NULL AND (average_daily_absenteeism_rate
+      < 0 OR average_daily_absenteeism_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: average_daily_attendance_rate_within_unit_interval
+    description: average_daily_attendance_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE average_daily_attendance_rate IS NOT NULL AND (average_daily_attendance_rate
+      < 0 OR average_daily_attendance_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: attendance_absenteeism_complement
+    description: 'average_daily_attendance_rate + average_daily_absenteeism_rate sums to 1.0 (+/-0.005)
+      on every row where both are populated (they are complements; max bronze deviation is 0.001 from
+      independent 3-decimal rounding). Verified on all 8 bronze files: 0 violations.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE average_daily_attendance_rate IS NOT NULL AND average_daily_absenteeism_rate
+      IS NOT NULL AND ABS(average_daily_attendance_rate + average_daily_absenteeism_rate - 1.0) > 0.005
+    mustBe: 0
+  - type: sql
+    name: rate_suppression_all_or_nothing
+    description: 'Suppression is all-or-nothing across the three rate columns: a row has either all three
+      rates populated or all three NULL. Verified on all 24 bronze file/sheet combinations: 0 partially
+      suppressed rows.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (chronically_absent_rate IS NULL) <> (average_daily_absenteeism_rate
+      IS NULL) OR (chronically_absent_rate IS NULL) <> (average_daily_attendance_rate IS NULL)
+    mustBe: 0
+  - type: sql
+    name: num_students_never_null
+    description: num_students (the enrollment denominator) is never suppressed or missing — populated
+      on every row in every bronze file, including rows whose rates are suppressed.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NULL
+    mustBe: 0
+customProperties:
+- property: title
+  value: School Attendance and Chronic Absenteeism
+- property: summary
+  value: Georgia school, district, and state absenteeism and attendance rates by grade and demographic
+    subgroup, 2018-2025.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2018-2025
+- property: schema_hash
+  value: 0f12850305086e9f2a0f7d39a97566c03c179e9f57c760ea884e353fea03da2c
+- property: available_years
+  value:
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value: []

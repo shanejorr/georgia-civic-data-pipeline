@@ -1,0 +1,372 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.enrollment_by_grade
+name: enrollment_by_grade
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Insights (GaDOE) FTE Enrollment by Grade Level(PK-12) — the FTE headcount of Georgia
+    public school students broken out by grade level (pre-kindergarten, kindergarten, grades 1-12, plus
+    an ''all'' total row) for every school, district, and the state. GaDOE counts enrollment twice per
+    school year: the October Cycle 1 (fall) snapshot and the March Cycle 3 (spring) snapshot; both are
+    preserved as distinct rows via the enrollment_period column. The fall half spans fiscal years 2010-2026
+    and the spring half 2010-2025. Grade is the row axis and lives in grade_level — there are no demographic
+    breakouts in this topic.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code. Read directly with DuckDB over Parquet.
+  limitations: This source has no suppression; a 0 is a real reported value. State rows have NULL district_code
+    and school_code. District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- enrollment_by_grade
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/enrollment_by_grade/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/enrollment_by_grade/**/*.parquet
+  format: parquet
+schema:
+- name: enrollment_by_grade
+  logicalType: object
+  physicalType: parquet
+  physicalName: enrollment_by_grade
+  description: enrollment_by_grade fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, enrollment_period, grade_level
+    (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - enrollment_period
+    - grade_level
+  - property: key_metric
+    value: num_students
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/enrollment_by_grade/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+  - property: example_queries
+    value:
+    - description: Latest year (2026), schools detail
+      query: SELECT * FROM enrollment_by_grade WHERE year = 2026 LIMIT 100
+    - description: District 601 in 2026
+      query: SELECT * FROM enrollment_by_grade WHERE district_code = '601' AND year = 2026 LIMIT 100
+    - description: Filter by enrollment_period = fall
+      query: SELECT * FROM enrollment_by_grade WHERE enrollment_period = 'fall' AND year = 2026 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Fiscal year of the FTE count (school year ending in this year; e.g. 2026 = the 2025-2026
+      school year). Sourced from the bronze filename, cross-checked against each file's preamble. The
+      spring (March) snapshot is present through 2025; the fall (October) snapshot through 2026.
+    examples:
+    - 2026
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state
+      charters and specialty schools, including the pseudo-districts 7991893/7991894/7991895 for the three
+      state schools (reported under district 799 in other years). NULL for state-level rows. FK to districts
+      dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code, extracted from the bronze `SChool Name` (`NNNN-Name`) prefix.
+      NULL for state- and district-level rows. FK to schools dimension (composite key with district_code).
+    examples:
+    - '0103'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: enrollment_period
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Enrollment-count snapshot within the school year: ''fall'' (GaDOE October Cycle 1 count,
+      first Tuesday of October) or ''spring'' (March Cycle 3 count, third Tuesday of March). Both snapshots
+      exist for nearly every entity — queries wanting one headline count per year must filter to a single
+      period, never sum across them.'
+    examples:
+    - 'fall'
+    enum:
+    - 'fall'
+    - 'spring'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Enrollment Period
+    - property: short_description
+      value: 'Enrollment snapshot within the school year: fall (October) or spring (March); never sum
+        across them.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: grade_level
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Canonical grade code per data-cleaning-standards section 16: ''pk'' (pre-kindergarten),
+      ''k'' (kindergarten), zero-padded ''01''..''12'', and ''all'' for the entity''s pre-aggregated total
+      row (the bronze `Total` column, which equals the sum of the 14 grade rows bit-exact).'
+    examples:
+    - '01'
+    enum:
+    - '01'
+    - '02'
+    - '03'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    - '09'
+    - '10'
+    - '11'
+    - '12'
+    - 'all'
+    - 'k'
+    - 'pk'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Level
+    - property: short_description
+      value: 'Grade: `pk`, `k`, `01`-`12`, or `all` for the entity total (sum of the 14 grade rows).'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: num_students
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: FTE student headcount for the (year, geography, period, grade) cell. Raw count, not scaled.
+      Never NULL — this source publishes no suppression markers — and a 0 is a real reported value (the
+      grade is not offered at the entity). For grade_level='all', equals the sum of the entity's 14 grade
+      rows in that period.
+    examples:
+    - 247
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Students
+    - property: short_description
+      value: FTE student headcount for the grade cell; never suppressed, so a 0 means the grade is not
+        offered.
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: enrollment_period_in_allowed_values
+    description: enrollment_period is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE enrollment_period IS NOT NULL AND enrollment_period NOT
+      IN ('fall', 'spring')
+    mustBe: 0
+  - type: sql
+    name: grade_level_in_allowed_values
+    description: grade_level is one of the 15 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_level IS NOT NULL AND grade_level NOT IN ('01', '02',
+      '03', '04', '05', '06', '07', '08', '09', '10', '11', '12', 'all', 'k', 'pk')
+    mustBe: 0
+  - type: sql
+    name: num_students_non_negative
+    description: num_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 0
+    mustBe: 0
+  - type: sql
+    name: all_equals_sum_of_grades
+    description: Within each (year, geography, enrollment_period) entity, the grade_level='all' row exists
+      and equals the sum of the 14 individual grade rows — the bronze `Total` column is the row-wise sum
+      of the grade columns (verified bit-exact on every bronze row of both periods; no suppression, so
+      the identity is exact with zero tolerance).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, enrollment_period, MAX(CASE
+      WHEN grade_level = 'all' THEN num_students END) AS all_count, SUM(CASE WHEN grade_level <> 'all'
+      THEN num_students ELSE 0 END) AS grade_sum FROM {object} GROUP BY year, district_code, school_code,
+      enrollment_period) t WHERE t.all_count IS NULL OR t.all_count <> t.grade_sum
+    mustBe: 0
+  - type: sql
+    name: entity_grade_block_complete
+    description: 'Every (year, geography, enrollment_period) entity publishes the complete 15-row grade
+      block: ''all'' + ''pk'' + ''k'' + ''01''..''12''. Bronze publishes all 15 counts (incl. zeros) for
+      every entity in every year — a short block means rows were lost in transform.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, district_code, school_code, enrollment_period FROM {object}
+      GROUP BY year, district_code, school_code, enrollment_period HAVING COUNT(*) <> 15) t
+    mustBe: 0
+  - type: sql
+    name: enrollment_period_in_allowed_values
+    description: enrollment_period is exactly one of the two canonical snapshot codes (fall, spring) —
+      any other value means a cycle-suffix parse or mapping regression.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE enrollment_period IS NULL OR enrollment_period NOT IN ('fall',
+      'spring')
+    mustBe: 0
+  - type: sql
+    name: both_periods_present
+    description: 'Both snapshot periods are published: the fact table contains at least one ''fall'' row
+      and at least one ''spring'' row (a single-period result would mean one family''s bronze files were
+      dropped during the merge).'
+    dimension: completeness
+    query: SELECT 2 - COUNT(DISTINCT enrollment_period) FROM {object} WHERE enrollment_period IN ('fall',
+      'spring')
+    mustBe: 0
+  - type: sql
+    name: num_students_never_null
+    description: 'num_students is never NULL: this source has no suppression — every count cell in every
+      bronze file parses as a non-negative integer (verified cell-by-cell across all 66 files).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NULL
+    mustBe: 0
+  - type: sql
+    name: state_equals_sum_of_districts
+    description: Per (year, enrollment_period, grade_level), the state row equals the sum of all district
+      rows — verified exact for every grade in every year of both periods (FTE counts are integers with
+      no suppression, so no tolerance is needed).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, enrollment_period, grade_level, MAX(CASE WHEN district_code
+      IS NULL THEN num_students END) AS state_count, SUM(CASE WHEN district_code IS NOT NULL AND school_code
+      IS NULL THEN num_students ELSE 0 END) AS district_sum FROM {object} GROUP BY year, enrollment_period,
+      grade_level) t WHERE t.state_count IS NULL OR t.state_count <> t.district_sum
+    mustBe: 0
+  - type: sql
+    name: schools_sum_to_district
+    description: Per (year, enrollment_period, district, grade_level), the school rows sum to the district
+      row, and every district has both a district row and at least one school row — verified exact for
+      every district and grade in every year of both periods.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, enrollment_period, district_code, grade_level, MAX(CASE
+      WHEN school_code IS NULL THEN num_students END) AS district_count, SUM(CASE WHEN school_code IS
+      NOT NULL THEN num_students END) AS school_sum FROM {object} WHERE district_code IS NOT NULL GROUP
+      BY year, enrollment_period, district_code, grade_level) t WHERE t.district_count IS NULL OR t.school_sum
+      IS NULL OR t.district_count <> t.school_sum
+    mustBe: 0
+customProperties:
+- property: title
+  value: Enrollment by Grade Level (Fall and Spring)
+- property: summary
+  value: Public school student headcounts by grade level (PK-12) from the October (fall) and March (spring)
+    FTE counts, per school, district, and state, 2010-2026.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2010-2026
+- property: schema_hash
+  value: 78fcbea4c8f1e76a69318a2e5fa50e3cfbecd810b2122e50c025fe4a36f267fe
+- property: available_years
+  value:
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+- property: year_gaps
+  value: []

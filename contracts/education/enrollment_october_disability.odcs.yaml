@@ -1,0 +1,298 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.enrollment_october_disability
+name: enrollment_october_disability
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Insights (GaDOE) FTE Enrollment by Disability — the October Cycle 1 FTE headcount
+    of Georgia public school students receiving special-education services, broken out by the 17 GaDOE/IDEA
+    disability categories (autism, specific learning disability, speech-language impairment, etc.) at
+    the school-district level, fiscal years 2014-2026. District-only: the source publishes no state aggregate
+    and no school-level rows. Counts below 10 are suppressed to NULL by the source''s small-cell rule.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: Suppressed cells are NULL (not zero). District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- enrollment_october_disability
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/enrollment_october_disability/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/enrollment_october_disability/**/*.parquet
+  format: parquet
+schema:
+- name: enrollment_october_disability
+  logicalType: object
+  physicalType: parquet
+  physicalName: enrollment_october_disability
+  description: enrollment_october_disability fact table, year-partitioned Parquet (split by detail level
+    where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic.
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - districts
+  - property: default_detail
+    value: districts
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+  - property: key_metric
+    value: num_students
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/enrollment_october_disability/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2026), districts detail
+      query: SELECT * FROM enrollment_october_disability WHERE year = 2026 LIMIT 100
+    - description: District 601 in 2026
+      query: SELECT * FROM enrollment_october_disability WHERE district_code = '601' AND year = 2026 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Fiscal year of the October FTE count (2026 = October 2025, i.e. the 2025-2026 school
+      year). Sourced from the bronze filename, cross-checked against each file's preamble.
+    examples:
+    - 2026
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state
+      charters and specialty schools, including the 2014-2019 pseudo-districts 7991893/7991894/7991895
+      for the three state schools (published with blank names by the source; named in the districts dimension).
+      Never NULL — this topic has no state-level rows. FK to districts dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: Always NULL — GaDOE publishes this disability breakdown at the district level only. The
+      column is kept so every education fact table shares the same key-column shape.
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Primary exceptionality — the GaDOE/IDEA disability category (FK to the global demographics
+      dimension's 'disability' demographic_category). One of 17 snake_case values mapped 1:1 from the
+      bronze code columns (AUT -> autism, SLD -> specific_learning_disability, ...). Every row's population
+      is students receiving special-education services, split by their single primary disability. This
+      topic publishes only the 17 disability categories at the district level — there is no 'all' total
+      row (the source publishes none).
+    examples:
+    - 'specific_learning_disability'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'autism'
+    - 'blind_low_vision'
+    - 'deaf'
+    - 'deaf_blind'
+    - 'emotional_behavioral_disorder'
+    - 'hospital_homebound'
+    - 'mild_intellectual_disability'
+    - 'moderate_intellectual_disability'
+    - 'orthopedic_impairment'
+    - 'other_health_impairment'
+    - 'profound_intellectual_disability'
+    - 'severe_intellectual_disability'
+    - 'significant_developmental_delay'
+    - 'specific_learning_disability'
+    - 'speech_language_impairment'
+    - 'traumatic_brain_injury'
+    - 'visual_impairment'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: One of 17 IDEA disability categories (e.g. autism, specific learning disability); no `all`
+        total row.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: num_students
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'FTE headcount of students served in the disability category for the (year, district)
+      cell. Raw count, not scaled. NULL means the source suppressed the cell (''*'': true count 1-9);
+      every published value is >= 10 (verified in every column of every year).'
+    examples:
+    - 247
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Number Students
+    - property: short_description
+      value: Count of special-education students in the disability category; NULL means suppressed (count
+        1-9), not zero.
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: 'Suppressed by the source''s small-cell rule: the true count is non-zero but below 10.'
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 17 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('autism',
+      'blind_low_vision', 'deaf', 'deaf_blind', 'emotional_behavioral_disorder', 'hospital_homebound',
+      'mild_intellectual_disability', 'moderate_intellectual_disability', 'orthopedic_impairment', 'other_health_impairment',
+      'profound_intellectual_disability', 'severe_intellectual_disability', 'significant_developmental_delay',
+      'specific_learning_disability', 'speech_language_impairment', 'traumatic_brain_injury', 'visual_impairment')
+    mustBe: 0
+  - type: sql
+    name: num_students_non_negative
+    description: num_students is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students IS NOT NULL AND num_students < 0
+    mustBe: 0
+  - type: sql
+    name: school_code_always_null
+    description: 'Structural fact: this is a district-only topic — GaDOE publishes no school-level disability
+      breakdown, so school_code is NULL on every row.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE school_code IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: district_block_complete_17_categories
+    description: Every (year, district) entity publishes the complete 17-category disability block — bronze
+      carries all 17 columns for every district row in every year (suppressed cells included as NULL),
+      so a short block means rows were lost in transform.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, district_code FROM {object} GROUP BY year, district_code
+      HAVING COUNT(*) <> 17) t
+    mustBe: 0
+  - type: sql
+    name: num_students_respects_suppression_floor
+    description: 'Suppression behavior: GaDOE suppresses counts below 10 to ''*'' (NULL in gold), so every
+      published num_students is >= 10 — verified for every cell of every bronze year (each file''s overall
+      minimum is exactly 10). A value 0-9 would mean the suppression handling broke.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE num_students < 10
+    mustBe: 0
+customProperties:
+- property: title
+  value: Special Education Enrollment by Disability
+- property: summary
+  value: District-level headcounts of students in special education by the 17 IDEA disability categories,
+    from the October FTE count, 2014-2026.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2014-2026
+- property: schema_hash
+  value: f18a070951364f075ff0a83cea6d7e796bd28e87c0de70a697671fa9ae891a49
+- property: available_years
+  value:
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+- property: year_gaps
+  value: []

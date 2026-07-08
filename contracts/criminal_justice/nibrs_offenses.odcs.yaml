@@ -1,0 +1,510 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.nibrs_offenses
+name: nibrs_offenses
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Reported criminal offenses in Georgia from the FBI''s National Incident-Based Reporting System
+    (NIBRS), aggregated from incident-level master extracts to county x year x offense type (all 52 observed
+    NIBRS Group A offense codes, with the FBI''s offense category and crime-against class), plus a statewide
+    rollup. Counts are raw agency reports — unestimated and unadjusted for non-reporting agencies. Georgia
+    transitioned from SRS summary reporting to NIBRS around October 2019: 2018-2019 cover early-adopter
+    agencies only (37 and 276 agencies vs 401-455 from 2020 on), so every row carries a coverage flag
+    and an agencies_reporting companion count — year-over-year change across the transition reflects adoption,
+    not crime. Offenses are attributed to the reporting agency''s primary county via the ORI-to-county
+    crosswalk.'
+  usage: 'Cite the FBI Crime Data Explorer (cde.ucr.cjis.gov), NIBRS master extracts for Georgia. Counts
+    are raw and unestimated: never compare across the coverage flag boundary (2018-2019 vs 2020+) without
+    noting the NIBRS adoption ramp, and read county trends alongside agencies_reporting. Sum offense_count
+    across offense types freely; never sum incident_count across offense types. Crime rates require an
+    external population denominator (not served here).'
+  limitations: 'State rows have NULL county_fips. Counts are unestimated raw agency reports: 2018-2019
+    cover early-adopter agencies only (37 / 276 agencies) and are not comparable to 2020+ as a state series;
+    even full-participation years vary in roster size (401-455 agencies). Offenses are attributed to the
+    reporting agency''s primary county — agencies spanning multiple counties are not split, and offenses
+    handled by one county''s agency on another county''s behalf follow the agency, not the offense location.
+    No demographic breakdowns (the NIBRS offense segment carries none; victim/offender demographics belong
+    to sibling NIBRS topics). The SRS estimated index-crime series (1979-2024) is deliberately excluded:
+    it is estimated, hierarchy-ruled summary data on an incompatible category vocabulary. NIBRS master
+    extracts have no suppression — a county-year-offense combination with no reports simply has no row.'
+tags:
+- criminal_justice
+- fbi crime data explorer, nibrs master state extracts
+- nibrs_offenses
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/nibrs_offenses/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/nibrs_offenses/**/*.parquet
+  format: parquet
+schema:
+- name: nibrs_offenses
+  logicalType: object
+  physicalType: parquet
+  physicalName: nibrs_offenses
+  description: nibrs_offenses fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, coverage, offense_type, offense_category,
+    crime_against (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: fbi_cde
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - coverage
+    - offense_type
+    - offense_category
+    - crime_against
+  - property: key_metric
+    value: offense_count
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/nibrs_offenses/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), counties detail
+      query: SELECT * FROM nibrs_offenses WHERE year = 2024 LIMIT 100
+    - description: Filter by coverage = full_participation
+      query: SELECT * FROM nibrs_offenses WHERE coverage = 'full_participation' AND year = 2024 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year the incidents occurred (data year).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the reporting agency's primary county;
+      FK to the counties dimension. NULL on statewide rollup rows. Agencies spanning multiple counties
+      (27 of 434 in 2024) are attributed wholly to their primary county; statewide agencies with no primary
+      county (GBI, State Patrol) count toward state rows only (none reported incidents in 2018-2024).
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rollup rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: coverage
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Methodology coverage flag for Georgia''s SRS-to-NIBRS transition (completed around October
+      2019). ''partial_adoption'' (2018-2019): only early-adopter agencies reported (37 in 2018, 276 in
+      2019) — these years are NOT comparable to later years as a state series. ''full_participation''
+      (2020 onward): statewide NIBRS reporting, though the agency roster still varies by year (401-455
+      agencies) — use agencies_reporting to separate crime change from participation change.'
+    examples:
+    - 'full_participation'
+    enum:
+    - 'full_participation'
+    - 'partial_adoption'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Coverage
+    - property: short_description
+      value: 'NIBRS adoption phase: partial_adoption (2018-2019 early-adopter agencies only) or full_participation
+        (2020 onward).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: offense_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: NIBRS Group A offense type, snake_cased from the FBI offense-type lookup pinned to the
+      2024 vocabulary so labels never vary by data year (NIBRS code 11D is served under its current name
+      criminal_sexual_contact; earlier lookups called it Fondling). Group B offenses are arrest-only in
+      NIBRS and do not appear in offense data. Sum offense_count over offense types within a county-year
+      for an all-offenses total; each offense type maps to exactly one offense_category and crime_against.
+    examples:
+    - 'aggravated_assault'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Offense Type
+    - property: short_description
+      value: NIBRS Group A offense type (e.g. aggravated_assault, burglary_breaking_entering, shoplifting).
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: offense_category
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'FBI offense category (pinned 2024 vocabulary) grouping related offense types — e.g.
+      assault_offenses covers aggravated_assault, simple_assault, and intimidation. Functionally dependent
+      on offense_type: filter or group by it for category-level counts without double counting.'
+    examples:
+    - 'assault_offenses'
+    enum:
+    - 'animal_cruelty'
+    - 'arson'
+    - 'assault_offenses'
+    - 'bribery'
+    - 'burglary_breaking_entering'
+    - 'counterfeiting_forgery'
+    - 'destruction_damage_vandalism_of_property'
+    - 'drug_narcotic_offenses'
+    - 'embezzlement'
+    - 'extortion_blackmail'
+    - 'fraud_offenses'
+    - 'gambling_offenses'
+    - 'homicide_offenses'
+    - 'human_trafficking'
+    - 'kidnapping_abduction'
+    - 'larceny_theft_offenses'
+    - 'motor_vehicle_theft'
+    - 'pornography_obscene_material'
+    - 'prostitution_offenses'
+    - 'robbery'
+    - 'sex_offenses'
+    - 'sex_offenses_non_forcible'
+    - 'stolen_property_offenses'
+    - 'weapon_law_violations'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Offense Category
+    - property: short_description
+      value: FBI offense category grouping related offense types (e.g. assault_offenses groups aggravated_assault,
+        simple_assault, intimidation).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: crime_against
+    logicalType: string
+    physicalType: string
+    required: true
+    description: NIBRS crime-against class (person / property / society), functionally dependent on offense_type.
+      Note it is NOT dependent on offense_category alone — the other_offenses category spans property
+      and society offense types.
+    examples:
+    - 'person'
+    enum:
+    - 'person'
+    - 'property'
+    - 'society'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Crime Against
+    - property: short_description
+      value: 'NIBRS crime-against class: person, property, or society.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: offense_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Number of offense reports (NIBRS offense-segment rows) of this type submitted by agencies
+      attributed to the county in the year. Raw, unestimated agency reports — an incident with several
+      offense types contributes one offense per type (the FBI''s offense-count convention). Equals completed_count
+      + attempted_count. Interpret across years together with coverage and agencies_reporting: the series
+      mixes crime change with NIBRS adoption change, especially 2018-2020.'
+    examples:
+    - 1542
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Offense Count
+    - property: short_description
+      value: Number of reported offenses of this type in the county and year (raw NIBRS counts, unestimated).
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  - name: completed_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Offenses reported as completed (NIBRS attempt_complete_flag 'C'). completed_count + attempted_count
+      = offense_count.
+    examples:
+    - 1490
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Completed Count
+    - property: unit
+      value: count
+  - name: attempted_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Offenses reported as attempted but not completed (NIBRS attempt_complete_flag 'A'). completed_count
+      + attempted_count = offense_count.
+    examples:
+    - 52
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Attempted Count
+    - property: unit
+      value: count
+  - name: incident_count
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: Distinct NIBRS incidents involving at least one offense of this type in the county and
+      year. Always between 1 and offense_count. In the GA extracts an offense type appears at most once
+      per incident, so incident_count equals offense_count within a row; the column is kept for grouped
+      rollups, where the two diverge. Additive across counties (an incident belongs to one agency) but
+      NOT additive across offense types — one incident can involve several offense types and is counted
+      once under each; summing incident_count over offense types overstates total incidents.
+    examples:
+    - 1301
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Incident Count
+    - property: short_description
+      value: Distinct criminal incidents involving at least one offense of this type (not additive across
+        offense types).
+    - property: unit
+      value: count
+  - name: agencies_reporting
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Coverage companion: the number of distinct agencies on the year''s NIBRS reporting roster
+      (the 2018 extract''s 12 exact-duplicate roster rows are deduplicated) — for county rows, agencies
+      whose primary county is this county; for statewide rows, all reporting agencies (37 in 2018, 276
+      in 2019, 401-455 from 2020). Constant across offense types within a county-year (it describes the
+      roster, not the offense type). Essential for interpreting the adoption ramp: a rising offense count
+      alongside a rising agency count reflects coverage, not necessarily crime.'
+    examples:
+    - 434
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Agencies Reporting
+    - property: short_description
+      value: Law-enforcement agencies that reported NIBRS data that year (county roster on county rows,
+        statewide roster on state rows).
+    - property: unit
+      value: count
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: coverage_in_allowed_values
+    description: coverage is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE coverage IS NOT NULL AND coverage NOT IN ('full_participation',
+      'partial_adoption')
+    mustBe: 0
+  - type: sql
+    name: offense_category_in_allowed_values
+    description: offense_category is one of the 24 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE offense_category IS NOT NULL AND offense_category NOT IN
+      ('animal_cruelty', 'arson', 'assault_offenses', 'bribery', 'burglary_breaking_entering', 'counterfeiting_forgery',
+      'destruction_damage_vandalism_of_property', 'drug_narcotic_offenses', 'embezzlement', 'extortion_blackmail',
+      'fraud_offenses', 'gambling_offenses', 'homicide_offenses', 'human_trafficking', 'kidnapping_abduction',
+      'larceny_theft_offenses', 'motor_vehicle_theft', 'pornography_obscene_material', 'prostitution_offenses',
+      'robbery', 'sex_offenses', 'sex_offenses_non_forcible', 'stolen_property_offenses', 'weapon_law_violations')
+    mustBe: 0
+  - type: sql
+    name: crime_against_in_allowed_values
+    description: crime_against is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE crime_against IS NOT NULL AND crime_against NOT IN ('person',
+      'property', 'society')
+    mustBe: 0
+  - type: sql
+    name: offense_count_non_negative
+    description: offense_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE offense_count IS NOT NULL AND offense_count < 0
+    mustBe: 0
+  - type: sql
+    name: completed_count_non_negative
+    description: completed_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE completed_count IS NOT NULL AND completed_count < 0
+    mustBe: 0
+  - type: sql
+    name: attempted_count_non_negative
+    description: attempted_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE attempted_count IS NOT NULL AND attempted_count < 0
+    mustBe: 0
+  - type: sql
+    name: incident_count_non_negative
+    description: incident_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE incident_count IS NOT NULL AND incident_count < 0
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_non_negative
+    description: agencies_reporting is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NOT NULL AND agencies_reporting <
+      0
+    mustBe: 0
+  - type: sql
+    name: completed_plus_attempted_equals_offense_count
+    description: Every offense is flagged completed or attempted, so the two partition counts must sum
+      exactly to offense_count on every row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE offense_count IS NOT NULL AND completed_count IS NOT NULL
+      AND attempted_count IS NOT NULL AND completed_count + attempted_count != offense_count
+    mustBe: 0
+  - type: sql
+    name: offense_count_at_least_one
+    description: Rows exist only for county-year-offense combinations with at least one report — a zero
+      or negative count means the aggregation broke.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE offense_count IS NULL OR offense_count < 1
+    mustBe: 0
+  - type: sql
+    name: incident_count_between_one_and_offense_count
+    description: Each counted incident carries at least one offense of the type, and each offense belongs
+      to exactly one incident, so 1 <= incident_count <= offense_count.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE incident_count IS NULL OR incident_count < 1 OR incident_count
+      > offense_count
+    mustBe: 0
+  - type: sql
+    name: state_offense_total_covers_county_sum
+    description: The state row counts ALL agencies (including statewide agencies with no county), so for
+      every (year, offense_type) with county rows a state row must exist with offense_count >= the county
+      sum (equal in 2018-2024; a statewide-agency submission would make it strictly greater).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, offense_type, MAX(CASE WHEN county_fips IS NULL THEN offense_count
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN offense_count END) AS county_sum
+      FROM {object} GROUP BY year, offense_type) WHERE county_sum IS NOT NULL AND (state_total IS NULL
+      OR state_total < county_sum)
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_constant_within_year_county
+    description: agencies_reporting describes the year's reporting roster for the geography, not the offense
+      type — it must be identical on every row of a (year, county) group (and on every state row of a
+      year).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, county_fips, COUNT(DISTINCT agencies_reporting) AS n FROM
+      {object} GROUP BY year, county_fips) WHERE n > 1
+    mustBe: 0
+  - type: sql
+    name: agencies_reporting_at_least_one
+    description: Every county row's offenses come from at least one agency rostered to that county, and
+      every state row from at least one reporting agency.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE agencies_reporting IS NULL OR agencies_reporting < 1
+    mustBe: 0
+  - type: sql
+    name: coverage_matches_transition_year
+    description: 'The coverage flag versions Georgia''s Oct-2019 SRS-to-NIBRS transition: partial_adoption
+      before 2020, full_participation from 2020 on — a mismatch means the methodological break is mislabeled.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (year < 2020 AND coverage != 'partial_adoption') OR (year
+      >= 2020 AND coverage != 'full_participation')
+    mustBe: 0
+  - type: sql
+    name: offense_type_determines_category_and_crime_against
+    description: offense_category and crime_against are denormalized attributes of offense_type (pinned
+      2024 vocabulary) — each offense_type must map to exactly one value of each, or category rollups
+      would double count.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT offense_type, COUNT(DISTINCT offense_category) AS nc, COUNT(DISTINCT
+      crime_against) AS na FROM {object} GROUP BY offense_type) WHERE nc > 1 OR na > 1
+    mustBe: 0
+customProperties:
+- property: title
+  value: NIBRS Reported Offenses by County
+- property: summary
+  value: Criminal offenses reported by Georgia law-enforcement agencies (FBI NIBRS), by county, year,
+    and offense type, 2018 onward.
+- property: source
+  value: FBI Crime Data Explorer, NIBRS master state extracts (Georgia)
+- property: source_url
+  value: https://cde.ucr.cjis.gov
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2018-2024
+- property: schema_hash
+  value: 1f12d58680f14f7739375f851676dd2e0aed49acfa7f8c54bf23d84a3043d593
+- property: available_years
+  value:
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

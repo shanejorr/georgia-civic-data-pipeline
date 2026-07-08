@@ -1,0 +1,497 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.violent_deaths
+name: violent_deaths
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Violent and external-cause deaths, crude death rates, and age-adjusted death rates (both per
+    100,000 population) for Georgia, from official death-certificate data (Georgia Department of Public
+    Health OASIS, Office of Vital Records), 1994 onward. Four MUTUALLY EXCLUSIVE cause categories are
+    served: homicide (Assault), suicide (Intentional Self-Harm), legal intervention (deaths caused by
+    law enforcement), and accidental shooting (unintentional firearm deaths). Each death has exactly one
+    underlying cause, but the four causes are only a subset of all external causes — there is NO all-causes
+    total row and summing across cause_of_death values does not produce any published total; always filter
+    to a single cause. County x year rows cover all demographics combined; statewide rows add race and
+    sex breakdowns. Deaths are ICD-9-coded for 1994-1998 and ICD-10-coded from 1999 (icd_revision flag)
+    — trends across that break are approximate. Rates based on fewer than 5 deaths are suppressed at source
+    (NULL); death counts are never suppressed, and a 0 is a true zero.'
+  usage: Cite the Georgia Department of Public Health, Office of Health Indicators for Planning (OASIS,
+    oasis.state.ga.us). ALWAYS filter to a single cause_of_death — the causes are mutually exclusive but
+    have no all-causes total, so a sum across them is not a published statistic. Filter to a single demographic
+    axis (race OR sex) on statewide rows. Use age_adjusted_death_rate_per_100k for cross-county or cross-group
+    comparisons; deaths are additive across counties within one cause (county deaths sum exactly to the
+    statewide row). Treat icd_revision = 'icd9' (1994-1998) and 'icd10' (1999 onward) as separate series
+    when analyzing trends.
+  limitations: 'Statewide rows have NULL county_fips. The four cause categories are mutually exclusive
+    but cover only a subset of external causes — there is no all-causes rollup and summing across cause_of_death
+    values does not reproduce any published total. Deaths are ICD-9-coded for 1994-1998 and ICD-10-coded
+    from 1999 (icd_revision flag; NCHS comparability break) — cause definitions shift slightly at the
+    break, so 1994-1998 is NOT seamlessly comparable with 1999 onward. Rates based on fewer than 5 deaths
+    are suppressed to NULL at source (rate suppression only — the exact deaths count is always published),
+    which leaves rate coverage sparse for small counties and the rare causes (legal_intervention, accidental_shooting).
+    Demographic breakdowns (race, sex) exist only on statewide rows; county rows are all-demographics-combined.
+    The source''s state-grain age and ethnicity breakdowns are not yet served. OASIS has NO all-intents
+    firearm category (accidental_shooting covers unintentional firearm deaths only) — for firearm deaths
+    across intents, and for a second homicide series, see the firearm_homicide_deaths topic (CDC WONDER).
+    Both series derive from the same NCHS death-certificate data and count deaths by county of residence,
+    but they are not interchangeable: this topic''s homicide counts all mechanisms and never suppresses
+    counts, while the WONDER topic suppresses county-year counts of 1-9 and serves firearm-specific homicide;
+    small definitional and revision-timing differences can also produce slightly different counts. Recent
+    years may be revised as late death certificates are filed.'
+tags:
+- criminal_justice
+- georgia department of public health, oasis data table tool
+- violent_deaths
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/violent_deaths/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/violent_deaths/**/*.parquet
+  format: parquet
+schema:
+- name: violent_deaths
+  logicalType: object
+  physicalType: parquet
+  physicalName: violent_deaths
+  description: violent_deaths fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, demographic, cause_of_death, icd_revision
+    (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: dph_oasis
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - demographic
+    - cause_of_death
+    - icd_revision
+  - property: key_metric
+    value: death_rate_per_100k
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/violent_deaths/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2024), counties detail
+      query: SELECT * FROM violent_deaths WHERE year = 2024 LIMIT 100
+    - description: Filter by cause_of_death = homicide
+      query: SELECT * FROM violent_deaths WHERE cause_of_death = 'homicide' AND year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year of death (year the death occurred, not the publication year).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the decedent's county of residence; FK
+      to the counties dimension. NULL on statewide rows. Deaths are counted by residence, not by where
+      the death occurred.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Demographic slice. County rows are always ''all'' (the source suppresses nearly all
+      county-level demographic cells, so they are not published); statewide rows carry ''all'' plus two
+      overlapping axes: race (asian, black, multiracial, native_american, pacific_islander, race_unknown,
+      white) and sex (female, male). Filter to one axis — summing race rows and sex rows together double-counts.
+      Race uses the post-1997 OMB split convention (separate asian and pacific_islander buckets, no combined
+      rollup); the seven race buckets are mutually exclusive and sum exactly to the ''all'' row, as do
+      female + male. race_unknown is published by the source and has zero deaths in every year to date.
+      Age and ethnicity breakdowns exist in the source at state grain but are not yet served.'
+    examples:
+    - 'all'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian'
+    - 'black'
+    - 'female'
+    - 'male'
+    - 'multiracial'
+    - 'native_american'
+    - 'pacific_islander'
+    - 'race_unknown'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: 'Demographic slice: ''all'' everywhere; race and sex breakdowns on statewide rows only.'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: cause_of_death
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'OASIS detailed cause-of-death category. The four causes are MUTUALLY EXCLUSIVE (each
+      death has exactly one underlying cause): homicide = Assault (deaths deliberately inflicted by another
+      person, excluding legal intervention); suicide = Intentional Self-Harm; legal_intervention = deaths
+      caused by law-enforcement action; accidental_shooting = unintentional firearm deaths (OASIS''s only
+      firearm-specific cause — for all-intents firearm deaths use the firearm_homicide_deaths topic from
+      CDC WONDER). There is NO all-causes rollup: the four categories are a subset of all external causes,
+      so their sum is not a published total — always filter to a single cause.'
+    examples:
+    - 'homicide'
+    enum:
+    - 'accidental_shooting'
+    - 'homicide'
+    - 'legal_intervention'
+    - 'suicide'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Cause of Death
+    - property: short_description
+      value: OASIS cause category — the four causes are mutually exclusive but have no all-causes total;
+        filter to one.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: icd_revision
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'ICD revision used to code the underlying cause of death: ''icd9'' for deaths in 1994-1998,
+      ''icd10'' from 1999 onward (the NCHS comparability break). Cause definitions differ slightly between
+      revisions, so trend comparisons spanning 1998/1999 are approximate — treat the two revisions as
+      separate series rather than one seamless 1994-2024 trend. The flag is a pure function of year.'
+    examples:
+    - 'icd10'
+    enum:
+    - 'icd10'
+    - 'icd9'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Icd Revision
+    - property: short_description
+      value: 'Cause-coding revision: icd9 for 1994-1998, icd10 from 1999 — a comparability break, not
+        one seamless series.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: deaths
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Count of resident deaths from the cause. Never suppressed at source: 0 is a true zero
+      (bronze renders zeros as empty cells, filled to 0 here — verified by exact reconciliation: county,
+      race, and sex slices each sum to the statewide total). Numerator of the death rates. The four cause_of_death
+      values are mutually exclusive but do not sum to any published total (see cause_of_death).'
+    examples:
+    - 12
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Deaths
+    - property: short_description
+      value: Resident deaths from the cause (never suppressed; 0 is a true zero).
+    - property: unit
+      value: count
+    - property: metric_component
+      value: numerator
+  - name: death_rate_per_100k
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Crude death rate per 100,000 residents (source-computed). NOT on the platform's 0-1 rate
+      scale — the natural unit is deaths per 100,000 population. Suppressed at source (NULL, bronze sentinel
+      -5) when based on fewer than 5 deaths — the row's exact deaths count is still published, so heavy
+      NULL density in small counties and for the rare causes (legal_intervention, accidental_shooting)
+      is expected. One 1999 suicide pacific_islander row is NULL from the source's not-applicable sentinel
+      (-2, no population denominator). 0.0 on zero-death rows (normalized from the source's inconsistent
+      zero rendering).
+    examples:
+    - 8.9
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Death Rate per 100k
+    - property: short_description
+      value: Crude death rate per 100,000 residents (suppressed to NULL when based on fewer than 5 deaths).
+    - property: null_meaning
+      value: 'NULL = suppressed at source: rate based on fewer than 5 deaths (the row''s exact deaths
+        count, 1-4, is still published).'
+    - property: key_metric
+      value: true
+  - name: age_adjusted_death_rate_per_100k
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Age-adjusted death rate per 100,000 residents (source-computed, standardized to the 2000
+      US standard population) — use this one when comparing counties or demographic groups with different
+      age structures. NOT on the platform's 0-1 rate scale. Same suppression as the crude rate (NULL when
+      based on fewer than 5 deaths); 0.0 on zero-death rows.
+    examples:
+    - 9.4
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Age Adjusted Death Rate per 100k
+    - property: short_description
+      value: Age-adjusted death rate per 100,000 (2000 US standard population).
+    - property: null_meaning
+      value: 'NULL = suppressed at source: rate based on fewer than 5 deaths.'
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 10 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian', 'black', 'female', 'male', 'multiracial', 'native_american', 'pacific_islander', 'race_unknown',
+      'white')
+    mustBe: 0
+  - type: sql
+    name: cause_of_death_in_allowed_values
+    description: cause_of_death is one of the 4 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE cause_of_death IS NOT NULL AND cause_of_death NOT IN ('accidental_shooting',
+      'homicide', 'legal_intervention', 'suicide')
+    mustBe: 0
+  - type: sql
+    name: icd_revision_in_allowed_values
+    description: icd_revision is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE icd_revision IS NOT NULL AND icd_revision NOT IN ('icd10',
+      'icd9')
+    mustBe: 0
+  - type: sql
+    name: deaths_non_negative
+    description: deaths is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE deaths IS NOT NULL AND deaths < 0
+    mustBe: 0
+  - type: sql
+    name: death_rate_per_100k_non_negative
+    description: Negative rate values are OASIS suppression/N-A sentinels and must have been nulled —
+      a surviving negative means the sentinel mask broke. (Authored because per-100k rates carry no unit
+      marker.)
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE death_rate_per_100k IS NOT NULL AND death_rate_per_100k
+      < 0
+    mustBe: 0
+  - type: sql
+    name: age_adjusted_death_rate_per_100k_non_negative
+    description: Negative rate values are OASIS suppression/N-A sentinels and must have been nulled.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE age_adjusted_death_rate_per_100k IS NOT NULL AND age_adjusted_death_rate_per_100k
+      < 0
+    mustBe: 0
+  - type: sql
+    name: rates_null_only_when_deaths_1_to_4
+    description: Rate suppression at source applies exactly to rates based on fewer than 5 deaths (the
+      one -2 no-denominator row also has deaths in 1-4), and zero-death rows are normalized to 0.0 — so
+      a NULL rate must sit on a row with 1-4 deaths.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (death_rate_per_100k IS NULL OR age_adjusted_death_rate_per_100k
+      IS NULL) AND deaths NOT BETWEEN 1 AND 4
+    mustBe: 0
+  - type: sql
+    name: zero_deaths_implies_zero_rates
+    description: A zero-death row has a true rate of 0 (normalized from the source's inconsistent zero
+      rendering) — both rates must be exactly 0.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE deaths = 0 AND (death_rate_per_100k IS NULL OR death_rate_per_100k
+      <> 0 OR age_adjusted_death_rate_per_100k IS NULL OR age_adjusted_death_rate_per_100k <> 0)
+    mustBe: 0
+  - type: sql
+    name: demographic_breakdowns_state_only
+    description: The source publishes demographic breakdowns only at state grain — every county row must
+      be demographic = 'all'.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE county_fips IS NOT NULL AND demographic <> 'all'
+    mustBe: 0
+  - type: sql
+    name: icd_revision_partitions_at_1999
+    description: 'The ICD-revision flag is a pure function of year: ''icd9'' for 1994-1998, ''icd10''
+      from 1999 (NCHS comparability break) — any other pairing means the flag derivation broke.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (year <= 1998 AND icd_revision <> 'icd9') OR (year >= 1999
+      AND icd_revision <> 'icd10')
+    mustBe: 0
+  - type: sql
+    name: county_deaths_sum_to_state_total
+    description: Deaths are never suppressed and every county is published, so the 159 county rows must
+      sum EXACTLY to the statewide 'all' row for every (year, cause_of_death).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, cause_of_death, MAX(CASE WHEN county_fips IS NULL AND demographic
+      = 'all' THEN deaths END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN deaths END)
+      AS county_sum FROM {object} GROUP BY year, cause_of_death) WHERE state_total IS NULL OR county_sum
+      IS NULL OR state_total <> county_sum
+    mustBe: 0
+  - type: sql
+    name: race_deaths_partition_to_state_total
+    description: The seven race buckets (split asian / pacific_islander convention, including the always-zero
+      race_unknown) are mutually exclusive and exhaustive — they must sum EXACTLY to the statewide 'all'
+      row for every (year, cause_of_death).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, cause_of_death, MAX(CASE WHEN demographic = 'all' THEN deaths
+      END) AS all_deaths, SUM(CASE WHEN demographic IN ('asian', 'black', 'multiracial', 'native_american',
+      'pacific_islander', 'race_unknown', 'white') THEN deaths END) AS race_sum FROM {object} WHERE county_fips
+      IS NULL GROUP BY year, cause_of_death) WHERE all_deaths IS NULL OR race_sum IS NULL OR all_deaths
+      <> race_sum
+    mustBe: 0
+  - type: sql
+    name: sex_deaths_partition_to_state_total
+    description: Female + male deaths must sum EXACTLY to the statewide 'all' row for every (year, cause_of_death).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, cause_of_death, MAX(CASE WHEN demographic = 'all' THEN deaths
+      END) AS all_deaths, SUM(CASE WHEN demographic IN ('female', 'male') THEN deaths END) AS sex_sum
+      FROM {object} WHERE county_fips IS NULL GROUP BY year, cause_of_death) WHERE all_deaths IS NULL
+      OR sex_sum IS NULL OR all_deaths <> sex_sum
+    mustBe: 0
+  - type: sql
+    name: all_159_counties_every_year_and_cause
+    description: OASIS publishes a full county grid (deaths are never suppressed) — every (year, cause_of_death)
+      must have exactly 159 county rows.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, cause_of_death, COUNT(*) AS n FROM {object} WHERE county_fips
+      IS NOT NULL GROUP BY year, cause_of_death) WHERE n <> 159
+    mustBe: 0
+  - type: sql
+    name: state_demographic_grid_complete
+    description: 'Every (year, cause_of_death) must have exactly 10 statewide rows: ''all'' + 7 race buckets
+      + female + male.'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, cause_of_death, COUNT(*) AS n FROM {object} WHERE county_fips
+      IS NULL GROUP BY year, cause_of_death) WHERE n <> 10
+    mustBe: 0
+customProperties:
+- property: title
+  value: Violent Deaths by County
+- property: summary
+  value: Homicide, suicide, legal-intervention, and accidental-shooting deaths and death rates per 100,000
+    for Georgia counties by year, from death certificates, 1994 onward.
+- property: source
+  value: Georgia Department of Public Health, OASIS Data Table Tool (death-certificate data, Office of
+    Vital Records)
+- property: source_url
+  value: https://oasis.state.ga.us/dtt/mortality
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 1994-2024
+- property: schema_hash
+  value: 5f4f9f11a6d02a12b211f3e02b0a72ae9f0880b2cd0c1f12e9b72a03ab2b63a0
+- property: available_years
+  value:
+  - 1994
+  - 1995
+  - 1996
+  - 1997
+  - 1998
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

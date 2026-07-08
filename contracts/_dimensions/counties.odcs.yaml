@@ -1,0 +1,104 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: _dimensions.counties
+name: counties
+version: 1.0.0
+status: active
+domain: shared
+tenant: georgia-public-data
+description:
+  purpose: Global Georgia counties dimension shared across all domains. One row per county with its 5-digit
+    FIPS code and name.
+  usage: Join from any fact table's county_fips FK on county_fips to attach county_name.
+  limitations: Counties only (159 rows); consolidated city-county governments appear under the county
+    name (e.g. Athens-Clarke under Clarke). Name-to-FIPS resolution for source data happens upstream via
+    src/utils/crosswalks.add_county_fips.
+tags:
+- shared
+- dimension
+- counties
+- geography
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/_dimensions/counties.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/_dimensions/counties.parquet
+  format: parquet
+schema:
+- name: counties
+  logicalType: object
+  physicalType: parquet
+  physicalName: counties
+  description: Counties dimension table; single (non-partitioned) Parquet file. Shared globally across
+    domains.
+  dataGranularityDescription: One row per Georgia county.
+  customProperties:
+  - property: entity_kind
+    value: dimension
+  - property: scope
+    value: global
+  - property: physical_basename
+    value: counties
+  properties:
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 5-digit county FIPS code (state prefix 13 + 3-digit county). Primary key; natural join
+      key for every fact table's county_fips FK.
+    examples:
+    - '13121'
+    customProperties:
+    - property: column_role
+      value: key
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_name
+    logicalType: string
+    physicalType: string
+    required: true
+    description: County name in title case, without 'County' suffix.
+    examples:
+    - Fulton
+    customProperties:
+    - property: column_role
+      value: attribute
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dimension has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: county_fips_not_null
+    description: Primary-key column county_fips is never NULL.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE county_fips IS NULL
+    mustBe: 0
+  - type: sql
+    name: primary_key_unique
+    description: The primary key county_fips is unique (no duplicate rows).
+    dimension: uniqueness
+    query: SELECT COUNT(*) FROM (SELECT county_fips FROM {object} GROUP BY county_fips HAVING COUNT(*)
+      > 1)
+    mustBe: 0
+  - type: sql
+    name: county_fips_is_5_digit_ga
+    description: county_fips is a 5-digit code with Georgia state prefix 13.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE county_fips IS NOT NULL AND NOT regexp_matches(county_fips,
+      '^13[0-9]{3}$')
+    mustBe: 0
+  - type: sql
+    name: all_159_counties_present
+    description: Georgia has exactly 159 counties.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBe: 159
+customProperties:
+- property: schema_hash
+  value: 79a71d9c1a1bae3f07b25944663975221474c45a7cd55bba3333d7da0b2c9369

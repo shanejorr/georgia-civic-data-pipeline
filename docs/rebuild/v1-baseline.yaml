@@ -1,0 +1,156 @@
+# v1 pipeline gold-hash baseline (snapshot of topic-status.yaml at tag v1-pipeline).
+# Used by the clean-start rebuild for per-topic parity checks:
+#   new gold sha256 == this baseline -> byte-identical regeneration (MATCH)
+#   differs -> the topic's data review must explain why (DIFFERS).
+# Do not edit by hand.
+topics:
+  education/georgiainsights/attendance_dashboard:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: 690a98e3133cf90eae81413ac781d8e9f719e5ddc2044aa074043f8c212be65c
+  education/georgiainsights/ccrpi_climate_star_rating:
+    approved_at: '2026-05-30'
+    approved_gold_sha256: f0647a7d59c28b46ede82517041aa53b928f8a3a77fdc8d9fb3465454245cdf7
+  education/georgiainsights/ccrpi_content_mastery:
+    approved_at: '2026-05-29'
+    approved_gold_sha256: a14eac092eb92c4bb95129d294f4cc53008d699cf0ba8b91d71ac30b47d74740
+  education/georgiainsights/ccrpi_graduation_rate:
+    approved_at: '2026-06-05'
+    approved_gold_sha256: c4ce73c682927a8b4fbecd342109ff59020404cc2a726427be6e70a3e43f0992
+  education/georgiainsights/ccrpi_progress:
+    approved_at: '2026-05-29'
+    approved_gold_sha256: bca02cd31bbc80add50c77835a61c87feb9dcc08dae147d9d28b4348c9c6af6c
+  education/georgiainsights/ccrpi_readiness:
+    approved_at: '2026-05-19'
+    approved_gold_sha256: 984ecd3785dc4c28101d9e9e0efa41ab8f209c5b69d1096526de030503a6c708
+  education/georgiainsights/ccrpi_scoring_by_component:
+    approved_at: '2026-05-20'
+    approved_gold_sha256: f9fd2660901fb92bb9477a10cbca5da4b9d5b35714198f3ac249628a8b95d75b
+  education/georgiainsights/enrollment_march_gender_race_ethnicity:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: d4e81a74b3f18d5772ee5071aeb2aa0bb01e839b530350f763dd185d13a33ada
+  education/georgiainsights/enrollment_by_grade:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: efb10f3e085c15d940c694b1fe1ceb0d3920deff5989854e28bdc9a36f75441c
+  education/georgiainsights/enrollment_october_disability:
+    approved_at: '2026-04-19'
+    approved_gold_sha256: da815d7e588c88112301982bc75bb5c6baa5d8c91d5f0319336b6f39e88da72a
+  education/georgiainsights/enrollment_october_gender_race_ethnicity:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: e3ad1be5b8a96cf8b48e1828daca3a9a61fa3c8a9d395aa069c99f68d1766882
+  education/georgiainsights/free_reduced_lunch:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: f24b85108b73abad743b0f345c4aae7db649d04af14bc34abe0c92bbf1428a1c
+  education/georgiainsights/georgia_milestones_end_of_course:
+    approved_at: '2026-06-04'
+    approved_gold_sha256: 8b4e9b2ac0943218d56ae2bfdec56bd7e97bec49f31c3e45eff556ea4c156823
+  education/georgiainsights/georgia_milestones_end_of_grade:
+    approved_at: '2026-06-04'
+    approved_gold_sha256: 51aebad2c9820edc7b9435ecfcf90a32f07384acc3165aee3d05f3b941a3b680
+  education/georgiainsights/georgia_student_growth_model_end_of_course:
+    approved_at: '2026-06-04'
+    approved_gold_sha256: 9deafb8c2a9753925c75c38adce94dc45b2f59ec958ecd8988de3cd15ef0a9de
+  education/georgiainsights/georgia_student_growth_model_end_of_grade:
+    approved_at: '2026-06-04'
+    approved_gold_sha256: 96276b0b1eb4b15ac7750963cff50337893afeaa29a7d6b1ed06231c887a3de6
+  education/georgiainsights/pathway_graduation_rate:
+    approved_at: '2026-04-21'
+    approved_gold_sha256: 4fc058624f64f6078ccfe64f48caa1728d9dea4cb66e6d532f13978888f6ef68
+  education/georgiainsights/wida_access:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: 5c9322f1a332f5fe5d47bb28d60fd3dc785bb79db16511c2e5d2e5bd4a72dc59
+  education/gosa/act_scores:
+    approved_at: '2026-06-05'
+    approved_gold_sha256: 97f26e7fb0402e6786484b0b8b4569fa02bbcb46890fd81a5aee0ddb4a5c5bb4
+  education/gosa/advanced_placement_scores:
+    approved_at: '2026-06-03'
+    approved_gold_sha256: 364c6f9df3514dbd6f49ac7ce2c6107fd409c1bf2eb9f95a4971c79282bd0cd1
+  education/gosa/attendance:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: de95a2d8f09e8af21bb83566b464682b9f686bdf9a5eda236b9e8ba0664db981
+  education/gosa/certified_personnel:
+    approved_at: '2026-05-13'
+    approved_gold_sha256: e57c1e17060dd28b6cbd4c0938456a5df8027aa9f7ce77b4ab9aa4129fac37d5
+  education/gosa/direct_certification_district:
+    approved_at: '2026-06-03'
+    approved_gold_sha256: 56030ad035edf49660ce8af50a1daffba4e9dd7aebe60f3a4e85d33a4193a74a
+  education/gosa/direct_certification_school:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: e557443f3d60a0f5779760afe376c044c792f31abdcb44298cf67b3950e23a57
+  education/gosa/dropout_rate_7_12:
+    approved_at: '2026-05-19'
+    approved_gold_sha256: 72ff49d5c76682317f33f4606efe97f8e48f9a2745d0e21a9b213ef1f74d1f0c
+  education/gosa/dropout_rate_9_12:
+    approved_at: '2026-05-19'
+    approved_gold_sha256: 30c9a3ba52b3130ee7501dd05c3d8213985abf234776bd0b08dc3e61b25268a8
+  education/gosa/educator_qualifications_emergency_and_provisional_credentials:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: f549f6eadf534ed640f8524f5ad984119c091c47c08dfe316f667cfd1e8629e9
+  education/gosa/educator_qualifications_inexperienced_teachers_leaders:
+    approved_at: '2026-06-04'
+    approved_gold_sha256: b8212c9fd819f87366b26294c9db805d93e312bb1b112ebfffcabff99c743724
+  education/gosa/educator_qualifications_out_of_field_teachers:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: e42f579fa3182ff911a560c2a0f92478c4eb14e467cb3f27cc3ccdba13c367f9
+  education/gosa/english_learner_exit_rate:
+    approved_at: '2026-05-19'
+    approved_gold_sha256: 70db9a3d017c0bf211a9652220e22b4941a1f986518702e95136baebf44ad769
+  education/gosa/enrollment_by_grade_level:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: 566b40353e515915188428935df75eb93f4c25a34e2869e211d7207c49188b22
+  education/gosa/enrollment_demographic_shares:
+    approved_at: '2026-05-25'
+    approved_gold_sha256: 049e261643441695d8cba851eb8378e826e3457d9efd2da83feb132f541e06a9
+  education/gosa/enrollment_program_participation:
+    approved_at: '2026-05-29'
+    approved_gold_sha256: 1e84aa81b977ec4abf305f06244ef27335ada367e2f07d8b0c66f37ba834c482
+  education/gosa/financial_efficiency_star_rating:
+    approved_at: '2026-05-19'
+    approved_gold_sha256: d511dc22b5de9cd330920561941310348ef6ed5407a3a6e9bd941845966305dc
+  education/gosa/georgia_alternate_assessment:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: 0240f508df436030aa90bf48051da5e24baf5359bae3b47e0e4469c398b11992
+  education/gosa/georgia_milestones_end_of_course_by_grade_level:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: 7ae6e546374b695fbe869f804663b514d0d950c307b460882d6584b4180a1ab0
+  education/gosa/georgia_milestones_end_of_course_lexile:
+    approved_at: '2026-06-05'
+    approved_gold_sha256: 7e04a0d85636d43ddc06cae0cae30202a18c2a9cb1273c75ddfb9df2db76df6a
+  education/gosa/georgia_milestones_end_of_grade_by_grade_level:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: 3b79a6c5782193084506310ca50ba02d1f4404b9c364e866b6b20b47d4eb459a
+  education/gosa/georgia_milestones_end_of_grade_lexile:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: 297f00339bf7e9c825860a91dafee7c7202d1782ae81427c7eb27c1ac3b86afd
+  education/gosa/graduation_rate_4_year_cohort:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: 5cba9857deb7d5f43dbbbfe6ee9bb25bba17579cef721beee10d9e56d63fafac
+  education/gosa/high_school_completers:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: 2804098d53c48555775a69fd327f103aac43b781ad6197d4ea1b5cd34a375d4c
+  education/gosa/hope_eligible_graduates:
+    approved_at: '2026-05-30'
+    approved_gold_sha256: e56203637f6e1fd66a820b7bad5d29f228c5f191df0745e0e355ec7ba9794cb1
+  education/gosa/postsecondary_c11:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: 96225bc5ca34243c880dc40a7366b6b9ed4862ba2015c3ff8bfb6e8eab312657
+  education/gosa/postsecondary_c12:
+    approved_at: '2026-05-24'
+    approved_gold_sha256: b2d8487637b6738eb9069df988def31b359ceab25cc486cda91959746996d7f0
+  education/gosa/retained_students:
+    approved_at: '2026-05-23'
+    approved_gold_sha256: a940200c125ed87d983252de02ce049e77fb0d599735eea94333df6ca5fc99c4
+  education/gosa/revenues_and_expenditures:
+    approved_at: '2026-05-30'
+    approved_gold_sha256: b464f2470ab1964eb92ecd49e989cbadfb8c9858f26db015aaa741b5521ade0e
+  education/gosa/salaries_and_benefits:
+    approved_at: '2026-05-30'
+    approved_gold_sha256: f4b80fd9feaa46d18f932ee4a076b8385a86c15e861d58a679fd71bbbd3a4621
+  education/gosa/sat_scores_highest:
+    approved_at: '2026-06-05'
+    approved_gold_sha256: 64c73931ccbd4a49d7aa4baf6c7fcff32651072f6a58597194e12291b94a411b
+  education/gosa/sat_scores_recent:
+    approved_at: '2026-06-05'
+    approved_gold_sha256: 5ddbac310e36c9d6f3262722703e04d522e0d07eab7c74ffc0ecaca25ca6769f
+  education/gosa/student_mobility_rate:
+    approved_at: '2026-05-30'
+    approved_gold_sha256: 846e9d924ac615fb3027f514470fcff1b6ecad6b81e8821f67f0b04789178146

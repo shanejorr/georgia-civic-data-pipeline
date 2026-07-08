@@ -1,0 +1,557 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.ccrpi_readiness
+name: ccrpi_readiness
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'Georgia Insights (GaDOE) CCRPI Readiness component. Reports each Georgia public school''s
+    (and aggregated district / state) 0-100 score on the CCRPI Readiness indicators, per grade cluster
+    (elementary/middle/high) and demographic subgroup. Six indicators vary by grade cluster: Literacy
+    / At or Above Grade-Level Reading (E/M/H), Student Attendance / Attendance (E/M/H), Beyond the Core
+    (E/M enrichment-course enrollment), Accelerated Enrollment (H college-level credit: AP, Dual Enrollment,
+    IB, Advanced Academic, Cambridge), Pathway Completion (H), and College and Career Readiness (H). From
+    2021 the source adds a sub-indicator axis breaking each indicator into its components, plus an unbenchmarked
+    participation rate for Accelerated Enrollment. Coverage: 2018-2019 and 2021-2025 (no 2020 — CCRPI
+    was not calculated under the COVID federal waiver). This is the deep-dive into the CCRPI Readiness
+    component only (by demographic, indicator, and sub-indicator); the overall CCRPI score and the side-by-side
+    scorecard of all five rolled-up component scores — including the rolled-up Readiness component score
+    — live in the `ccrpi_scoring_by_component` topic (the CCRPI overview).'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- ccrpi_readiness
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/ccrpi_readiness/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/ccrpi_readiness/**/*.parquet
+  format: parquet
+schema:
+- name: ccrpi_readiness
+  logicalType: object
+  physicalType: parquet
+  physicalName: ccrpi_readiness
+  description: ccrpi_readiness fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic, grade_cluster,
+    indicator, sub_indicator (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+    - grade_cluster
+    - indicator
+    - sub_indicator
+  - property: key_metric
+    value: indicator_score
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/ccrpi_readiness/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), schools detail
+      query: SELECT * FROM ccrpi_readiness WHERE year = 2025 LIMIT 100
+    - description: District 601 in 2025
+      query: SELECT * FROM ccrpi_readiness WHERE district_code = '601' AND year = 2025 LIMIT 100
+    - description: Filter by grade_cluster = elementary
+      query: SELECT * FROM ccrpi_readiness WHERE grade_cluster = 'elementary' AND year = 2025 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (2024 = 2023-2024). Sourced from the bronze `School
+      Year` column, cross-checked against the filename year. No 2020 partition exists — CCRPI was waived
+      that year.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state-charter
+      systems (preserved in full, never truncated). NULL for state-level aggregate rows — the bronze `ALL`
+      sentinel becomes NULL. FK to districts dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded). NULL for district- and state-level aggregate
+      rows — the bronze `ALL` sentinel becomes NULL. FK to schools dimension (composite key with district_code).
+    examples:
+    - '0194'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Canonical demographic code (FK to demographics dimension). All 10 groups are reported
+      in every year. `all` is the unfiltered total. Race uses the combined `asian_pacific_islander` bucket
+      — the source publishes the explicit `Asian/Pacific Islander` label and never separate Asian or Pacific
+      Islander rows in any year. The `American Indian/Alaskan` (2018-2021) vs `American Indian/Alaskan
+      Native` (2022+) label rename resolves via the shared demographic aliases.
+    examples:
+    - 'english_learners'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'hispanic'
+    - 'multiracial'
+    - 'native_american'
+    - 'students_with_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Which student group the row covers - `all`, a race, or a special population; all 10 groups
+        appear every year.
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: grade_cluster
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Grade band the row measures: `elementary`, `middle`, or `high` (bronze single letters
+      E/M/H). A school spanning multiple bands has one row per band. Indicator availability is cluster-bound:
+      Accelerated Enrollment, Pathway Completion, and College and Career Readiness exist only at `high`;
+      Beyond the Core only at `elementary`/`middle` (verified in every year).'
+    examples:
+    - 'elementary'
+    enum:
+    - 'elementary'
+    - 'high'
+    - 'middle'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Cluster
+    - property: short_description
+      value: 'Grade band the row covers: elementary, middle, or high (some indicators exist only at certain
+        bands).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: indicator
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Readiness indicator measured, snake_case. `Beyond The Core` (2018-2019 casing) unifies
+      with `Beyond the Core` (2021+). `literacy` / `student_attendance` (2018-2022) are kept DISTINCT
+      from their 2023+ successors `at_or_above_grade_level_reading` / `attendance` — GaDOE revised the
+      underlying methodology with the 2023 rename, so the two series must not be concatenated. 2022 published
+      only 4 indicators (no Student Attendance, no College and Career Readiness) per the DOE pandemic
+      disclaimer in that file.
+    examples:
+    - 'beyond_the_core'
+    enum:
+    - 'accelerated_enrollment'
+    - 'at_or_above_grade_level_reading'
+    - 'attendance'
+    - 'beyond_the_core'
+    - 'college_and_career_readiness'
+    - 'literacy'
+    - 'pathway_completion'
+    - 'student_attendance'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Indicator
+    - property: short_description
+      value: Which readiness measure the row reports (e.g. literacy, attendance, accelerated enrollment,
+        pathway completion).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: sub_indicator
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'Component within the parent indicator (2021-2025 only), snake_case. `all` is the rolled-up
+      parent-indicator score — it unifies bronze `All` (indicators WITH sub-breakdowns) and bronze `NA`
+      (2021-2022; indicators with no sub-breakdown at all, i.e. Literacy and Student Attendance). 16 sub-component
+      values nest strictly under their parent indicator (verified in every Era 2 year); `fine_arts` and
+      `world_language` appear under BOTH `beyond_the_core` and `pathway_completion`, and `international_baccalaureate`
+      under both `accelerated_enrollment` and (2022-2023 only) `pathway_completion`. Label drift collapses:
+      casing variants (`Fine arts`, `Advanced academic`), the 2021 verbose College and Career Readiness
+      labels (`Readiness score on the ACT, SAT, AP or IB`, `End of pathway assessment (EOPA)`, `Entering
+      TCSG/USG without needing remediation`), and the ACT/SAT/AP/IB -> ACT/SAT/AP/IB/Cambridge evolution
+      all unify (`act_sat_ap_ib_cambridge`, `eopa`, `tcsg_usg`). NOTE: Cambridge exams qualify only from
+      2025 — `act_sat_ap_ib_cambridge` rows in 2021-2024 measured ACT/SAT/AP/IB only; this is one continuous
+      series whose qualifying-assessment list widened in 2025.'
+    examples:
+    - 'fine_arts'
+    enum:
+    - 'act_sat_ap_ib_cambridge'
+    - 'advanced_academic'
+    - 'advanced_placement'
+    - 'all'
+    - 'asvab'
+    - 'cambridge'
+    - 'career_exploratory'
+    - 'computer_science'
+    - 'ctae'
+    - 'dual_enrollment'
+    - 'eopa'
+    - 'fine_arts'
+    - 'international_baccalaureate'
+    - 'physical_education_health'
+    - 'tcsg_usg'
+    - 'work_based_learning'
+    - 'world_language'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Sub Indicator
+    - property: short_description
+      value: Component within the parent indicator (2021 on); `all` is the rolled-up indicator score;
+        NULL before 2021.
+    - property: null_meaning
+      value: 'Era 1 row (2018-2019): bronze had no Sub-Indicator column, so no sub-breakdown was collected.
+        NULL is deliberately distinct from `all` (Era 2''s explicit rolled-up-score marker).'
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 7
+  - name: indicator_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Benchmarked CCRPI Readiness score on the 0-100 CCRPI score scale (NOT a percentage —
+      score columns are exempt from the 0-1 convention per education CLAUDE.md, matching ccrpi_content_mastery
+      and ccrpi_progress). Observed range is exactly [0, 100] in every year; CCRPI caps component scores
+      at 100.
+    examples:
+    - 78.52
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Indicator Score
+    - property: short_description
+      value: Benchmarked readiness score on a 0-100 scale; NULL when suppressed or not applicable.
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Suppressed by GaDOE (`TFS` / `Too Few Students` — too few students in the subgroup) or not
+        applicable / not reported (`NA`).
+    - property: key_metric
+      value: true
+  - name: unbenchmarked_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Raw Accelerated Enrollment participation rate before CCRPI benchmark scaling, on the
+      0-1 decimal scale (bronze 0-100, divided by 100). Population pattern shifts mid-era (verified per
+      year): 2021-2023 populate it ONLY on `accelerated_enrollment` rows; 2024-2025 populate every row,
+      where non-AE values are a cell-identical redundant copy of `indicator_score` (divided by 100). Only
+      `accelerated_enrollment` rows carry independent information; on AE rows the rate and the score are
+      always co-published (co-null).'
+    examples:
+    - 0.4217
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Unbenchmarked Rate
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: 'Era 1 row (2018-2019: column absent from bronze); a 2021-2023 non-Accelerated-Enrollment
+        row (bronze `NA` — rate published only for Accelerated Enrollment in those years); or suppressed
+        (`TFS` / `Too Few Students`).'
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 10 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'economically_disadvantaged', 'english_learners', 'hispanic',
+      'multiracial', 'native_american', 'students_with_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: grade_cluster_in_allowed_values
+    description: grade_cluster is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_cluster IS NOT NULL AND grade_cluster NOT IN ('elementary',
+      'high', 'middle')
+    mustBe: 0
+  - type: sql
+    name: indicator_in_allowed_values
+    description: indicator is one of the 8 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE indicator IS NOT NULL AND indicator NOT IN ('accelerated_enrollment',
+      'at_or_above_grade_level_reading', 'attendance', 'beyond_the_core', 'college_and_career_readiness',
+      'literacy', 'pathway_completion', 'student_attendance')
+    mustBe: 0
+  - type: sql
+    name: sub_indicator_in_allowed_values
+    description: sub_indicator is one of the 17 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE sub_indicator IS NOT NULL AND sub_indicator NOT IN ('act_sat_ap_ib_cambridge',
+      'advanced_academic', 'advanced_placement', 'all', 'asvab', 'cambridge', 'career_exploratory', 'computer_science',
+      'ctae', 'dual_enrollment', 'eopa', 'fine_arts', 'international_baccalaureate', 'physical_education_health',
+      'tcsg_usg', 'work_based_learning', 'world_language')
+    mustBe: 0
+  - type: sql
+    name: indicator_score_within_range
+    description: indicator_score is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE indicator_score IS NOT NULL AND (indicator_score < 0 OR
+      indicator_score > 100)
+    mustBe: 0
+  - type: sql
+    name: unbenchmarked_rate_within_unit_interval
+    description: unbenchmarked_rate is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE unbenchmarked_rate IS NOT NULL AND (unbenchmarked_rate
+      < 0 OR unbenchmarked_rate > 1)
+    mustBe: 0
+  - type: sql
+    name: era1_no_sub_indicator
+    description: Era 1 (2018-2019) bronze has no Sub-Indicator column, so sub_indicator is structurally
+      NULL in those years.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2018, 2019) AND sub_indicator IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: era2_sub_indicator_always_present
+    description: Every Era 2 (2021-2025) bronze row carries a Sub-Indicator token (`All`, `NA`, or a component),
+      so sub_indicator is never NULL from 2021 on (the bronze `NA` token is restored and mapped to `all`,
+      not left NULL).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE year >= 2021 AND sub_indicator IS NULL
+    mustBe: 0
+  - type: sql
+    name: era1_no_unbenchmarked_rate
+    description: Era 1 (2018-2019) bronze has no Unbenchmarked Rate column, so unbenchmarked_rate is structurally
+      NULL in those years.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2018, 2019) AND unbenchmarked_rate IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: unbenchmarked_rate_ae_only_2021_2023
+    description: 'In 2021-2023 bronze publishes the unbenchmarked rate ONLY for Accelerated Enrollment
+      rows (verified: 0 numeric values on non-AE rows in each of those files; non-AE cells hold the `NA`
+      marker).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2021, 2022, 2023) AND indicator <> 'accelerated_enrollment'
+      AND unbenchmarked_rate IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: unbenchmarked_rate_mirrors_score_2024_2025
+    description: 'In 2024-2025 bronze publishes the unbenchmarked rate on every row, where non-Accelerated-Enrollment
+      values are a cell-identical copy of Indicator Score (verified: raw strings equal on 100%% of non-AE
+      rows, both files). Gold therefore has unbenchmarked_rate = indicator_score / 100 on those rows,
+      with matching nullness.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2024, 2025) AND indicator <> 'accelerated_enrollment'
+      AND ((unbenchmarked_rate IS NULL) <> (indicator_score IS NULL) OR (unbenchmarked_rate IS NOT NULL
+      AND ABS(unbenchmarked_rate * 100 - indicator_score) > 0.001))
+    mustBe: 0
+  - type: sql
+    name: ae_rate_and_score_co_null
+    description: 'On Accelerated Enrollment rows (Era 2), the unbenchmarked rate and the indicator score
+      are always co-published: both numeric or both suppressed (verified: 0 one-sided rows in every Era
+      2 file).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year >= 2021 AND indicator = 'accelerated_enrollment' AND
+      (unbenchmarked_rate IS NULL) <> (indicator_score IS NULL)
+    mustBe: 0
+  - type: sql
+    name: hs_only_indicators_high_cluster
+    description: Accelerated Enrollment, Pathway Completion, and College and Career Readiness are high-school
+      indicators — published only at grade_cluster = 'high' in every year (verified across all 7 files).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE indicator IN ('accelerated_enrollment', 'pathway_completion',
+      'college_and_career_readiness') AND grade_cluster <> 'high'
+    mustBe: 0
+  - type: sql
+    name: beyond_the_core_elementary_middle_only
+    description: Beyond the Core is published only at the elementary and middle grade clusters in every
+      year (verified across all 7 files).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE indicator = 'beyond_the_core' AND grade_cluster NOT IN
+      ('elementary', 'middle')
+    mustBe: 0
+  - type: sql
+    name: indicator_rename_era_boundary
+    description: 'The 2023 methodology revision renamed Literacy -> At or Above Grade-Level Reading and
+      Student Attendance -> Attendance: the old labels appear only through 2022 and the new labels only
+      from 2023 (verified per year).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (indicator IN ('literacy', 'student_attendance') AND year
+      > 2022) OR (indicator IN ('at_or_above_grade_level_reading', 'attendance') AND year < 2023)
+    mustBe: 0
+  - type: sql
+    name: partial_2022_no_attendance_or_ccr
+    description: 'The 2022 release omitted Student Attendance and College and Career Readiness per the
+      DOE pandemic disclaimer embedded in the file (verified: 2022 publishes only 4 indicators).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year = 2022 AND indicator IN ('student_attendance', 'attendance',
+      'college_and_career_readiness')
+    mustBe: 0
+  - type: sql
+    name: sub_indicator_nests_under_parent
+    description: 'Every non-`all` sub-indicator nests under its parent indicator (allowed pairs verified
+      in every Era 2 bronze file): Beyond the Core {career_exploratory, computer_science, fine_arts, physical_education_health,
+      world_language}; Accelerated Enrollment {advanced_placement, dual_enrollment, international_baccalaureate,
+      cambridge}; College and Career Readiness {act_sat_ap_ib_cambridge, asvab, eopa, tcsg_usg, work_based_learning};
+      Pathway Completion {advanced_academic, ctae, fine_arts, world_language, international_baccalaureate}.
+      The no-breakdown indicators (literacy, student_attendance, at_or_above_grade_level_reading, attendance)
+      carry only `all`.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE sub_indicator IS NOT NULL AND sub_indicator <> 'all' AND
+      NOT ((indicator = 'beyond_the_core' AND sub_indicator IN ('career_exploratory', 'computer_science',
+      'fine_arts', 'physical_education_health', 'world_language')) OR (indicator = 'accelerated_enrollment'
+      AND sub_indicator IN ('advanced_placement', 'dual_enrollment', 'international_baccalaureate', 'cambridge'))
+      OR (indicator = 'college_and_career_readiness' AND sub_indicator IN ('act_sat_ap_ib_cambridge',
+      'asvab', 'eopa', 'tcsg_usg', 'work_based_learning')) OR (indicator = 'pathway_completion' AND sub_indicator
+      IN ('advanced_academic', 'ctae', 'fine_arts', 'world_language', 'international_baccalaureate')))
+    mustBe: 0
+customProperties:
+- property: title
+  value: CCRPI Readiness
+- property: summary
+  value: Georgia school readiness scores (the CCRPI Readiness component) by indicator, sub-indicator,
+    grade cluster, and demographic subgroup, 2018-2025.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2018-2025
+- property: schema_hash
+  value: 2341973aebcc7a2615c1f0438e40a389301d20edc5271389cbb0d093e7503d6d
+- property: available_years
+  value:
+  - 2018
+  - 2019
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value:
+  - 2020

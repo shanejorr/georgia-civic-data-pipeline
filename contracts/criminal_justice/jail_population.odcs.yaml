@@ -1,0 +1,584 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.jail_population
+name: jail_population
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Monthly county jail population survey for all 159 Georgia counties from the Georgia Sheriffs''
+    Association jail report, November 2007 onward: total inmates, jail capacity (permanent beds), and
+    a four-way custody breakdown (state-sentenced inmates held in county jail, inmates awaiting trial,
+    county-sentenced inmates, other inmates), plus a statewide rollup per month with the number of counties
+    reporting. The survey is voluntary and self-reported: each county-month carries a reporting_status
+    (reported / no_jail / not_reported), non-reporting county-months have NULL metrics, and statewide
+    rows reflect reporting counties only. This is the only monthly-grain, county-level jail population
+    series available for Georgia.'
+  usage: 'Attribute the Georgia Sheriffs'' Association (georgiasheriffs.org/jail-report). The survey is
+    voluntary: filter or group by reporting_status, and interpret statewide rows together with counties_reporting
+    — a statewide drop can reflect fewer counties reporting, not fewer inmates. Compute capacity utilization
+    as total_inmates / jail_capacity. Do not assume total_inmates equals the sum of the four breakdown
+    columns after 2023-05.'
+  limitations: 'State rows have NULL county_fips. Voluntary self-reported survey: non-reporting county-months
+    carry NULL metrics (never imputed, never zero-filled), and coverage collapses in recent months (159
+    counties reporting in 2019-03 vs 59 in 2026-06) — statewide rows reflect reporting counties only.
+    The source has no suppression: NULL means not reported, and zeros are real (no-jail counties). The
+    source''s six percent columns are corrupted at source (x100 rendering in 38 months) and are dropped
+    — recompute rates from the count columns. The custody breakdown stops closing to total_inmates from
+    2023-06 onward and the identity is intentionally not enforced. Months 2008-01 and 2008-02 are missing
+    from the source archive.'
+tags:
+- criminal_justice
+- georgia sheriffs' association monthly county jail report
+- jail_population
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/jail_population/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/jail_population/**/*.parquet
+  format: parquet
+schema:
+- name: jail_population
+  logicalType: object
+  physicalType: parquet
+  physicalName: jail_population
+  description: jail_population fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year, county_fips, month, reporting_status (geography columns
+    are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: jails
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - month
+    - reporting_status
+  - property: key_metric
+    value: total_inmates
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/jail_population/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2026), counties detail
+      query: SELECT * FROM jail_population WHERE year = 2026 LIMIT 100
+    - description: Filter by month = 06
+      query: SELECT * FROM jail_population WHERE month = '06' AND year = 2026 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year of the report month.
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the county jail; FK to the counties dimension.
+      NULL on statewide rollup rows. Consolidated city-county governments appear under their county FIPS.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on statewide rollup rows.
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: month
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Calendar report month as a zero-padded string ('01'-'12'). The survey snapshot for that
+      month; months 2008-01 and 2008-02 are absent (empty pages in the source archive).
+    examples:
+    - '06'
+    enum:
+    - '01'
+    - '02'
+    - '03'
+    - '04'
+    - '05'
+    - '06'
+    - '07'
+    - '08'
+    - '09'
+    - '10'
+    - '11'
+    - '12'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Month
+    - property: short_description
+      value: Report month (01-12).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: reporting_status
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'Coverage flag for the voluntary survey. ''reported'': the county submitted inmate counts.
+      ''no_jail'': the county submitted that it operates no jail (metrics are real zeros). ''not_reported'':
+      the county did not submit that month (metrics are NULL; never imputed). Isolated single-month no-jail
+      flags surrounded by reporting months (58 county-months, concentrated 2023 onward, e.g. Richmond
+      2024-06) are source errors reclassified to not_reported. Coverage varies by month — 159 counties
+      reporting in 2019-03 vs 59 in 2026-06; use counties_reporting on statewide rows.'
+    examples:
+    - 'reported'
+    enum:
+    - 'no_jail'
+    - 'not_reported'
+    - 'reported'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Reporting Status
+    - property: short_description
+      value: 'Whether the county submitted data that month: reported, no_jail (county operates no jail),
+        or not_reported.'
+    - property: null_meaning
+      value: NULL on statewide rollup rows (a statewide aggregate has no single reporting status).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: total_inmates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Total inmates in the county jail (statewide rows: sum over reporting counties). Through
+      2023-05 this equals the sum of the four custody-breakdown columns for effectively all rows; from
+      2023-06 onward the source''s breakdown no longer closes the identity for most counties (median gap
+      13 inmates), so the total and the components are each served exactly as reported and the identity
+      must not be assumed.'
+    examples:
+    - 2624
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Total Inmates
+    - property: short_description
+      value: Total inmates held in the county jail during the report month.
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the county did not report to the voluntary survey that month (reporting_status
+        = 'not_reported'), or on the rare reported row whose individual cell is blank at source. Zeros
+        are real (no-jail counties report literal zeros).
+    - property: key_metric
+      value: true
+  - name: jail_capacity
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Jail capacity (permanent beds). Statewide rows sum the capacity of jails reporting that
+      month. Occupancy can exceed capacity — compute utilization as total_inmates / jail_capacity (the
+      source's percent-of-capacity column is corrupted at source and is not served).
+    examples:
+    - 3636
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Jail Capacity
+    - property: short_description
+      value: Jail capacity in permanent beds.
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the county did not report to the voluntary survey that month (reporting_status
+        = 'not_reported'), or on the rare reported row whose individual cell is blank at source. Zeros
+        are real (no-jail counties report literal zeros).
+  - name: state_sentenced_inmates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Inmates sentenced to state institutions but held in the county jail (e.g. awaiting transfer
+      to state prison). Two impossible source values are NULLed: Madison 2019-05 published 0.01 (a fractional
+      headcount, excluded from the source''s own totals row) and Pulaski 2024-03 published -3. In 2018-09
+      the four custody-breakdown columns for Macon, Madison, Marion, McDuffie, and McIntosh were misaligned
+      by a source-side sort mismatch; they are reassigned to the correct counties here (each component
+      set sums exactly to its owner''s published total).'
+    examples:
+    - 200
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: State Sentenced Inmates
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the county did not report to the voluntary survey that month (reporting_status
+        = 'not_reported'), or on the rare reported row whose individual cell is blank at source. Zeros
+        are real (no-jail counties report literal zeros).
+  - name: awaiting_trial_inmates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Inmates awaiting trial in the county jail (pretrial detention). Subject to the same 2018-09
+      five-county realignment documented on state_sentenced_inmates.
+    examples:
+    - 2042
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Awaiting Trial Inmates
+    - property: short_description
+      value: Inmates held awaiting trial (pretrial detainees).
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the county did not report to the voluntary survey that month (reporting_status
+        = 'not_reported'), or on the rare reported row whose individual cell is blank at source. Zeros
+        are real (no-jail counties report literal zeros).
+  - name: county_sentenced_inmates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Inmates serving a county sentence in the county jail. One impossible source value is
+      NULLed (Long 2025-07 published -1). Subject to the same 2018-09 five-county realignment documented
+      on state_sentenced_inmates.
+    examples:
+    - 820
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: County Sentenced Inmates
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the county did not report to the voluntary survey that month (reporting_status
+        = 'not_reported'), or on the rare reported row whose individual cell is blank at source. Zeros
+        are real (no-jail counties report literal zeros).
+  - name: other_inmates
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Inmates in the residual 'other' category (not state-sentenced, awaiting trial, or county-sentenced
+      — e.g. holds for other jurisdictions). Two impossible source values are NULLed (Long 2025-08 and
+      Charlton 2026-02, each published -2). Subject to the same 2018-09 five-county realignment documented
+      on state_sentenced_inmates.
+    examples:
+    - 987
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Other Inmates
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the county did not report to the voluntary survey that month (reporting_status
+        = 'not_reported'), or on the rare reported row whose individual cell is blank at source. Zeros
+        are real (no-jail counties report literal zeros).
+  - name: counties_reporting
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'Statewide rows only: number of counties that submitted to the survey that month (reporting_status
+      ''reported'' or ''no_jail''; the source''s ''Number of Jails Reporting'' concept). Derived by counting
+      submitting county rows; it can differ from the source''s published summary item 13 (''Number of
+      Jails Reporting''), which is unreliable (it counts blank rows as reporting and exceeds Georgia''s
+      159 counties in three months of 2022). Always read alongside statewide totals — month-over-month
+      statewide change conflates population change with coverage change.'
+    examples:
+    - 143
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Counties Reporting
+    - property: short_description
+      value: Number of counties that submitted to the survey that month (statewide rows only).
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL on county rows; populated on statewide rows only.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: month_in_allowed_values
+    description: month is one of the 12 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE month IS NOT NULL AND month NOT IN ('01', '02', '03', '04',
+      '05', '06', '07', '08', '09', '10', '11', '12')
+    mustBe: 0
+  - type: sql
+    name: reporting_status_in_allowed_values
+    description: reporting_status is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status IS NOT NULL AND reporting_status NOT IN
+      ('no_jail', 'not_reported', 'reported')
+    mustBe: 0
+  - type: sql
+    name: total_inmates_non_negative
+    description: total_inmates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE total_inmates IS NOT NULL AND total_inmates < 0
+    mustBe: 0
+  - type: sql
+    name: jail_capacity_non_negative
+    description: jail_capacity is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE jail_capacity IS NOT NULL AND jail_capacity < 0
+    mustBe: 0
+  - type: sql
+    name: state_sentenced_inmates_non_negative
+    description: state_sentenced_inmates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE state_sentenced_inmates IS NOT NULL AND state_sentenced_inmates
+      < 0
+    mustBe: 0
+  - type: sql
+    name: awaiting_trial_inmates_non_negative
+    description: awaiting_trial_inmates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE awaiting_trial_inmates IS NOT NULL AND awaiting_trial_inmates
+      < 0
+    mustBe: 0
+  - type: sql
+    name: county_sentenced_inmates_non_negative
+    description: county_sentenced_inmates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE county_sentenced_inmates IS NOT NULL AND county_sentenced_inmates
+      < 0
+    mustBe: 0
+  - type: sql
+    name: other_inmates_non_negative
+    description: other_inmates is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE other_inmates IS NOT NULL AND other_inmates < 0
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_non_negative
+    description: counties_reporting is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE counties_reporting IS NOT NULL AND counties_reporting <
+      0
+    mustBe: 0
+  - type: sql
+    name: not_reported_implies_null_metrics
+    description: A county-month the county did not report can carry no inmate counts — all six metrics
+      must be NULL (coverage is flagged, never imputed).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'not_reported' AND (total_inmates IS
+      NOT NULL OR jail_capacity IS NOT NULL OR state_sentenced_inmates IS NOT NULL OR awaiting_trial_inmates
+      IS NOT NULL OR county_sentenced_inmates IS NOT NULL OR other_inmates IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: no_jail_implies_zero_counts
+    description: A county that submitted 'no jail' holds no inmates and has no beds — every non-NULL metric
+      on a no_jail row must be 0 (verified across the full archive).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'no_jail' AND (COALESCE(total_inmates,
+      0) != 0 OR COALESCE(jail_capacity, 0) != 0 OR COALESCE(state_sentenced_inmates, 0) != 0 OR COALESCE(awaiting_trial_inmates,
+      0) != 0 OR COALESCE(county_sentenced_inmates, 0) != 0 OR COALESCE(other_inmates, 0) != 0)
+    mustBe: 0
+  - type: sql
+    name: state_total_inmates_equals_sum_of_counties
+    description: 'The statewide row is built by summing the reporting county rows, matching the source
+      county-table TOTALS row (verified per file at parse time) — the state total_inmates must equal the
+      county sum exactly for every month. Authored for all six metrics: the identity is structural, and
+      a future §4b mask applied after the state build would otherwise ship a silent divergence.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN total_inmates
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN total_inmates END) AS county_sum
+      FROM {object} GROUP BY year, month) WHERE state_total IS NOT NULL AND county_sum IS NOT NULL AND
+      state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: state_jail_capacity_equals_sum_of_counties
+    description: 'The statewide row is built by summing the reporting county rows, matching the source
+      county-table TOTALS row (verified per file at parse time) — the state jail_capacity must equal the
+      county sum exactly for every month. Authored for all six metrics: the identity is structural, and
+      a future §4b mask applied after the state build would otherwise ship a silent divergence.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN jail_capacity
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN jail_capacity END) AS county_sum
+      FROM {object} GROUP BY year, month) WHERE state_total IS NOT NULL AND county_sum IS NOT NULL AND
+      state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: state_state_sentenced_inmates_equals_sum_of_counties
+    description: 'The statewide row is built by summing the reporting county rows, matching the source
+      county-table TOTALS row (verified per file at parse time) — the state state_sentenced_inmates must
+      equal the county sum exactly for every month. Authored for all six metrics: the identity is structural,
+      and a future §4b mask applied after the state build would otherwise ship a silent divergence.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN state_sentenced_inmates
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN state_sentenced_inmates END) AS
+      county_sum FROM {object} GROUP BY year, month) WHERE state_total IS NOT NULL AND county_sum IS NOT
+      NULL AND state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: state_awaiting_trial_inmates_equals_sum_of_counties
+    description: 'The statewide row is built by summing the reporting county rows, matching the source
+      county-table TOTALS row (verified per file at parse time) — the state awaiting_trial_inmates must
+      equal the county sum exactly for every month. Authored for all six metrics: the identity is structural,
+      and a future §4b mask applied after the state build would otherwise ship a silent divergence.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN awaiting_trial_inmates
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN awaiting_trial_inmates END) AS county_sum
+      FROM {object} GROUP BY year, month) WHERE state_total IS NOT NULL AND county_sum IS NOT NULL AND
+      state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: state_county_sentenced_inmates_equals_sum_of_counties
+    description: 'The statewide row is built by summing the reporting county rows, matching the source
+      county-table TOTALS row (verified per file at parse time) — the state county_sentenced_inmates must
+      equal the county sum exactly for every month. Authored for all six metrics: the identity is structural,
+      and a future §4b mask applied after the state build would otherwise ship a silent divergence.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN county_sentenced_inmates
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN county_sentenced_inmates END) AS
+      county_sum FROM {object} GROUP BY year, month) WHERE state_total IS NOT NULL AND county_sum IS NOT
+      NULL AND state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: state_other_inmates_equals_sum_of_counties
+    description: 'The statewide row is built by summing the reporting county rows, matching the source
+      county-table TOTALS row (verified per file at parse time) — the state other_inmates must equal the
+      county sum exactly for every month. Authored for all six metrics: the identity is structural, and
+      a future §4b mask applied after the state build would otherwise ship a silent divergence.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN other_inmates
+      END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN other_inmates END) AS county_sum
+      FROM {object} GROUP BY year, month) WHERE state_total IS NOT NULL AND county_sum IS NOT NULL AND
+      state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_matches_submitting_rows
+    description: Each month's statewide counties_reporting must equal the number of county rows with reporting_status
+      'reported' or 'no_jail' (submitters) that month.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, month, MAX(CASE WHEN county_fips IS NULL THEN counties_reporting
+      END) AS cr, SUM(CASE WHEN county_fips IS NOT NULL AND reporting_status != 'not_reported' THEN 1
+      ELSE 0 END) AS submitted FROM {object} GROUP BY year, month) WHERE cr IS NOT NULL AND cr != submitted
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_on_state_rows_only
+    description: counties_reporting is a statewide coverage measure — it must be NULL on every county
+      row and populated on every statewide row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (county_fips IS NOT NULL AND counties_reporting IS NOT
+      NULL) OR (county_fips IS NULL AND counties_reporting IS NULL)
+    mustBe: 0
+  - type: sql
+    name: reporting_status_null_iff_state_row
+    description: 'reporting_status applies to county rows only: NULL on every statewide row, non-NULL
+      on every county row.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (county_fips IS NULL AND reporting_status IS NOT NULL)
+      OR (county_fips IS NOT NULL AND reporting_status IS NULL)
+    mustBe: 0
+  - type: sql
+    name: all_159_counties_every_month
+    description: Every monthly report lists all 159 Georgia counties (non-reporters as blank rows), so
+      every (year, month) must carry exactly 159 county rows.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, month, COUNT(CASE WHEN county_fips IS NOT NULL THEN 1 END)
+      AS n_counties FROM {object} GROUP BY year, month) WHERE n_counties != 159
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_within_159
+    description: No month can have more submitters than Georgia has counties.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE counties_reporting > 159
+    mustBe: 0
+customProperties:
+- property: title
+  value: Monthly County Jail Population
+- property: summary
+  value: Monthly inmate population, capacity, and custody breakdown for each Georgia county jail, from
+    the Georgia Sheriffs' Association's voluntary survey (2007 onward).
+- property: source
+  value: Georgia Sheriffs' Association monthly county jail report
+- property: source_url
+  value: https://georgiasheriffs.org/jail-report/
+- property: update_frequency
+  value: monthly
+- property: year_range
+  value: 2007-2026
+- property: schema_hash
+  value: 34227ee0354cfbf2779d567025753aaaafce80b3e1f39276b3af1d30c5198e72
+- property: available_years
+  value:
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+  - 2026
+- property: year_gaps
+  value: []

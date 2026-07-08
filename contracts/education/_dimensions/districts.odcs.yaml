@@ -1,0 +1,162 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education._dimensions.districts
+name: districts
+version: 1.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: Education districts dimension. One row per GOSA district code with its latest name, district
+    type, and the 5-digit Census school-district code used for cross-dataset linking.
+  usage: Join from any education fact table's district_code FK on district_code to attach district_name
+    / district_type, and use district_census_id to link to Census school-district data (and, via the crosswalk,
+    to county-level Census datasets -- a district is not 1:1 with a county).
+  limitations: Latest name only (no slowly-changing history). district_census_id is the Census school-district
+    code (NOT a county FIPS); it is NULL for RESAs, state agencies, and state-special pseudo-districts,
+    and for any charter/state school lacking a host-county mapping. Charters and state schools are otherwise
+    mapped to their host county's primary Census school district.
+tags:
+- education
+- dimension
+- districts
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/_dimensions/districts.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/_dimensions/districts.parquet
+  format: parquet
+schema:
+- name: districts
+  logicalType: object
+  physicalType: parquet
+  physicalName: districts
+  description: Districts dimension table; single (non-partitioned) Parquet file.
+  dataGranularityDescription: One row per district_code.
+  customProperties:
+  - property: entity_kind
+    value: dimension
+  - property: scope
+    value: domain
+  - property: physical_basename
+    value: districts
+  - property: link_keys
+    value:
+    - column: district_census_id
+      target: census.school_district
+      via: crosswalks.ga_census_crosswalk
+      note: 5-digit Census school-district code (NOT a county FIPS). To link to county-level Census data,
+        join through the crosswalk school_district -> county FIPS (a district is not 1:1 with a county).
+        NULL for RESAs, state agencies, state-special pseudo-districts, and unmapped charters/state schools.
+  properties:
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'GOSA district code: 3-digit (zero-padded) for standard districts, 7-digit for charter
+      districts. A small allowlist of non-numeric pseudo-district codes (e.g. RTC) is also permitted.
+      Primary key; natural join key for every education fact table''s district_code FK.'
+    examples:
+    - '601'
+    customProperties:
+    - property: column_role
+      value: key
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_name
+    logicalType: string
+    physicalType: string
+    required: false
+    description: District name in title case (latest name; no history).
+    examples:
+    - Fulton County
+    customProperties:
+    - property: column_role
+      value: attribute
+  - name: district_census_id
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit Census Bureau school-district code (e.g. 00060) for cross-dataset linking --
+      the value of the crosswalk's school_district column. This is a Census SCHOOL-DISTRICT code, NOT
+      a county FIPS and NOT the 7-digit NCES LEA ID; a school district does not map 1:1 to a county. To
+      reach county-level Census data, join through the crosswalk (school_district -> county FIPS). Charters
+      and state schools are mapped to their host county's primary Census school district where known;
+      NULL for RESAs, state agencies, state-special pseudo-districts, and any charter/state school without
+      a host-county mapping. Sourced via src/utils/crosswalks.py.
+    examples:
+    - '00060'
+    customProperties:
+    - property: column_role
+      value: attribute
+    - property: link_key
+      value:
+        target: census.school_district
+        via: crosswalks.ga_census_crosswalk
+        note: 5-digit Census school-district code (NOT a county FIPS). To link to county-level Census
+          data, join through the crosswalk school_district -> county FIPS (a district is not 1:1 with
+          a county). NULL for RESAs, state agencies, state-special pseudo-districts, and unmapped charters/state
+          schools.
+  - name: district_type
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'Classification of the reporting entity. Values: standard (Census-matchable school district),
+      state_charter (state-authorized charter, incl. legacy pre-782 charters), commission_charter (State
+      Charter Schools Commission-authorized), state_school (799-prefix Georgia state schools -- Deaf/Blind),
+      state_agency (state agency reporting education programs under a district code -- Depts. of Corrections/Juvenile
+      Justice/Human Resources/Labor; no Census ID), state_special (state-managed pseudo-district aggregates,
+      e.g. Residential Treatment Center), resa (Regional Educational Service Agency, 850-888 range; not
+      a Census-matchable district).'
+    examples:
+    - standard
+    enum:
+    - commission_charter
+    - resa
+    - standard
+    - state_agency
+    - state_charter
+    - state_school
+    - state_special
+    customProperties:
+    - property: column_role
+      value: attribute
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dimension has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: district_type_in_allowed_values
+    description: district_type is one of the 7 canonical values.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE district_type IS NOT NULL AND district_type NOT IN ('commission_charter',
+      'resa', 'standard', 'state_agency', 'state_charter', 'state_school', 'state_special')
+    mustBe: 0
+  - type: sql
+    name: district_code_not_null
+    description: Primary-key column district_code is never NULL.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_code IS NULL
+    mustBe: 0
+  - type: sql
+    name: primary_key_unique
+    description: The primary key district_code is unique (no duplicate rows).
+    dimension: uniqueness
+    query: SELECT COUNT(*) FROM (SELECT district_code FROM {object} GROUP BY district_code HAVING COUNT(*)
+      > 1)
+    mustBe: 0
+  - type: sql
+    name: standard_districts_have_census_id
+    description: Every standard (Census-matchable) district has a non-null district_census_id.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE district_type = 'standard' AND district_census_id IS NULL
+    mustBe: 0
+customProperties:
+- property: schema_hash
+  value: 88a57be665361776bf234ab7cf02733ccb299b0fc2f5dd5b39ce26a4ff27e4c2

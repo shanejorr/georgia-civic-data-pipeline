@@ -1,0 +1,201 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.inmate_population
+name: inmate_population
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: 'Year-end head count of inmates of the Georgia Prison System, statewide, 2000 forward: the
+    number of state prisoners in custody on December 31 of each year, as published by the Georgia Department
+    of Corrections'' standing ''Year-End Population since 1925'' statistical report. Includes state prisoners
+    held in state prisons, inmate boot camps, county prisons, transition centers, and private prisons;
+    excludes probationers in detention centers, diversion centers, or probation boot camps, and inmates
+    held in county jails. The source report reaches back to 1925, but its pre-2000 figures use different
+    counting methods (1925-1979 National Corrections Reporting Program data; 1980-1999 December average
+    daily population), so this dataset serves only the methodologically uniform December-31 head-count
+    era (2000 forward) rather than pooling across the break.'
+  usage: 'Cite the Georgia Department of Corrections'' ''Year-End Population since 1925'' statistical
+    trends report. The metric is a statewide point-in-time stock (December 31 head count) of STATE prisoners:
+    it excludes county-jail inmates and probation/parole supervision populations, so never reconcile it
+    against the jail_population topic (county jails) or community-supervision counts as if they shared
+    a denominator. Rates per resident require an external population denominator (not served here).'
+  limitations: 'This source has no suppression; every served year has a real published value. Statewide
+    only — no county, facility, or demographic breakdown exists in this report. Years before 2000 are
+    deliberately not served: the source''s 1925-1979 figures come from the National Corrections Reporting
+    Program and its 1980-1999 figures are December AVERAGE daily populations, neither directly comparable
+    to the December-31 head count used from 2000 forward, so the series is floored at 2000 instead of
+    pooling across the methodology break. The count covers state prisoners in state prisons, inmate boot
+    camps, county prisons, transition centers, and private prisons, and excludes probationers in detention,
+    diversion, or probation boot camps and inmates in county jails.'
+tags:
+- criminal_justice
+- georgia department of corrections, statistical trends standing reports — year-end population since 1925
+- inmate_population
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/inmate_population/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/inmate_population/**/*.parquet
+  format: parquet
+schema:
+- name: inmate_population
+  logicalType: object
+  physicalType: parquet
+  physicalName: inmate_population
+  description: inmate_population fact table, year-partitioned Parquet (split by detail level where present).
+  dataGranularityDescription: One row per year.
+  customProperties:
+  - property: sub_topic
+    value: gdc
+  - property: detail_levels
+    value:
+    - states
+  - property: default_detail
+    value: states
+  - property: grain
+    value:
+    - year
+  - property: key_metric
+    value: year_end_inmate_population
+  - property: null_semantics
+    value:
+      suppressed_to_null: false
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/inmate_population/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value: []
+  - property: example_queries
+    value:
+    - description: Latest year (2024), states detail
+      query: SELECT * FROM inmate_population WHERE year = 2024 LIMIT 100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year; the head count is taken on December 31 of this year. Serving starts at
+      2000, the first year of the source's December-31 head-count methodology (the report's 1925-1999
+      figures use different counting methods and are not served).
+    examples:
+    - 2024
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: year_end_inmate_population
+    logicalType: integer
+    physicalType: bigint
+    required: true
+    description: 'Number of inmates of the Georgia Prison System in custody on December 31 (point-in-time
+      head count, not an average): state prisoners in state prisons, inmate boot camps, county prisons,
+      transition centers, and private prisons. Excludes probationers in detention centers, diversion centers,
+      or probation boot camps, and inmates held in county jails — do not reconcile against county-jail
+      population data. The served era spans roughly 43,900 (2000) to 54,500 (2007), with the COVID-19
+      drop to 46,132 in 2020.'
+    examples:
+    - 50107
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Year End Inmate Population
+    - property: short_description
+      value: State prisoners in custody on December 31 — statewide head count of the Georgia Prison System.
+    - property: unit
+      value: count
+    - property: key_metric
+      value: true
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: year_end_inmate_population_non_negative
+    description: year_end_inmate_population is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE year_end_inmate_population IS NOT NULL AND year_end_inmate_population
+      < 0
+    mustBe: 0
+  - type: sql
+    name: no_pre_2000_years
+    description: Gold serves only the December-31 head-count era — the source's pre-2000 NCRP and December-ADP
+      figures are methodologically different and must never appear.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year < 2000
+    mustBe: 0
+  - type: sql
+    name: population_never_null
+    description: The source publishes a complete unsuppressed series — a NULL head count would mean an
+      extraction regression, never real missingness.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE year_end_inmate_population IS NULL
+    mustBe: 0
+  - type: sql
+    name: year_series_contiguous
+    description: The report is updated annually with no gaps — every year between the earliest and latest
+      served year must be present (a gap means the PDF extraction lost a print-block row).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, LEAD(year) OVER (ORDER BY year) AS next_year FROM {object})
+      WHERE next_year IS NOT NULL AND next_year != year + 1
+    mustBe: 0
+customProperties:
+- property: title
+  value: State Prison Year-End Population
+- property: summary
+  value: Year-end (December 31) head count of Georgia state prisoners, statewide, 2000 onward, from the
+    Georgia Department of Corrections.
+- property: source
+  value: Georgia Department of Corrections, Statistical Trends standing reports — Year-End Population
+    since 1925
+- property: source_url
+  value: https://gdc.georgia.gov/organization/about-gdc/agency-activity/research-and-reports/standing-reports/statistical-trends
+- property: update_frequency
+  value: annual (first week of January)
+- property: year_range
+  value: 2000-2024
+- property: schema_hash
+  value: b4b589e9e20867a515acb0c9eefb94fb6cb1dadae82043f3484cc3f00110ee22
+- property: available_years
+  value:
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+- property: year_gaps
+  value: []

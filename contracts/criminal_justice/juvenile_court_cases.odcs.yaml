@@ -1,0 +1,501 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: criminal_justice.juvenile_court_cases
+name: juvenile_court_cases
+version: 1.0.0
+status: active
+domain: criminal_justice
+tenant: georgia-public-data
+description:
+  purpose: Juvenile court cases disposed per Georgia county per calendar year, 1997-2023 (2014 not published),
+    from OJJDP's Easy Access to State and County Juvenile Court Case Counts (EZACO; National Center for
+    Juvenile Justice, National Juvenile Court Data Archive; Georgia data reported by the Council of Juvenile
+    Court Judges of Georgia). Counts are split by case type (delinquency, status offense, dependency)
+    and handling (petitioned = formally handled, non-petitioned = informally handled). County participation
+    is voluntary and collapses over time — 152 of 159 counties reported delinquency in 1997 but only 41
+    in 2023 — so every row carries a reporting_status flag, and the state summary rows aggregate REPORTING
+    counties only (they are not statewide totals). State rows also carry the source-computed cases-per-1,000-juveniles
+    rate and the count of reporting counties.
+  usage: 'Cite: Hockenberry, S. and Puzzanchera, C. Easy Access to State and County Juvenile Court Case
+    Counts (EZACO). Online: OJJDP Statistical Briefing Book. Georgia data source: Council of Juvenile
+    Court Judges of Georgia via the National Juvenile Court Data Archive. ALWAYS account for coverage:
+    filter or group by reporting_status on county rows, and read state rows with counties_reporting —
+    state figures cover reporting counties only and are NOT statewide totals. Do not sum county case_count
+    across years or counties without checking coverage, and never treat NULL as zero. For rates with platform
+    denominators (e.g. county-level rates or full-state juvenile population), join the juvenile_population
+    topic on year + county_fips.'
+  limitations: 'County participation is voluntary and collapses over time: 152 of 159 counties reported
+    delinquency in 1997, 25 in 2009, 41 in 2023; non-petitioned measures have zero reporting counties
+    in 1997-2000 and 2010-2013, and dependency has zero in 2015, 2019, and 2021-2023. State rows aggregate
+    REPORTING counties only — they understate true statewide volume and their year-over-year change conflates
+    caseload with coverage (use counties_reporting). 2014 is absent entirely (Georgia did not publish;
+    never interpolated). Small counts are suppressed at source (''*'' = 1-4, plus secondary suppression)
+    — NULL, never zero — so county sums understate state rows. Rates are published for state rows only,
+    with reporting-coverage denominators (not the full state juvenile population). Figures are cases disposed
+    (not arrests or referrals); Georgia''s upper age of juvenile-court jurisdiction is 16.'
+tags:
+- criminal_justice
+- ojjdp statistical briefing book — easy access to state and county juvenile court case counts
+- juvenile_court_cases
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/criminal_justice/juvenile_court_cases/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/criminal_justice/juvenile_court_cases/**/*.parquet
+  format: parquet
+schema:
+- name: juvenile_court_cases
+  logicalType: object
+  physicalType: parquet
+  physicalName: juvenile_court_cases
+  description: juvenile_court_cases fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, county_fips, case_type, petition_status, reporting_status
+    (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: ojjdp
+  - property: detail_levels
+    value:
+    - counties
+    - states
+  - property: default_detail
+    value: counties
+  - property: grain
+    value:
+    - year
+    - county_fips
+    - case_type
+    - petition_status
+    - reporting_status
+  - property: key_metric
+    value: case_count
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: criminal_justice/juvenile_court_cases/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: county_fips
+      target_object: counties
+      target_columns:
+      - county_fips
+      attribute_columns:
+      - county_name
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2023), counties detail
+      query: SELECT * FROM juvenile_court_cases WHERE year = 2023 LIMIT 100
+    - description: Filter by case_type = delinquency
+      query: SELECT * FROM juvenile_court_cases WHERE case_type = 'delinquency' AND year = 2023 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Calendar year the cases were disposed. 2014 is absent — Georgia did not publish that
+      year (a source gap, not missing data in this pipeline).
+    examples:
+    - 2023
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: county_fips
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 5-digit county FIPS code (state prefix 13) of the county juvenile court; FK to the counties
+      dimension. All 159 Georgia counties appear every year, including non-reporting ones. NULL on state
+      summary rows.
+    examples:
+    - '13121'
+    relationships:
+    - to: counties.county_fips
+    customProperties:
+    - property: column_role
+      value: fk_county
+    - property: label
+      value: County FIPS
+    - property: null_meaning
+      value: NULL on state summary rows (aggregates over reporting counties only).
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: case_type
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Type of juvenile court case. ''delinquency'': acts that would be crimes if committed
+      by an adult. ''status_offense'': conduct unlawful only for juveniles (truancy, runaway, curfew).
+      ''dependency'': abuse/neglect/dependency matters. Reporting coverage differs by case type — dependency
+      has zero reporting counties in 2015, 2019, and 2021-2023.'
+    examples:
+    - 'delinquency'
+    enum:
+    - 'delinquency'
+    - 'dependency'
+    - 'status_offense'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Case Type
+    - property: short_description
+      value: 'Type of juvenile court case: delinquency, status offense, or dependency.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: petition_status
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Whether the case was handled formally ('petitioned' — a petition was filed for an adjudicatory
+      or waiver hearing) or informally ('non_petitioned' — handled without a petition, e.g. dismissed,
+      diverted, or informally sanctioned). The source publishes no petitioned + non-petitioned total,
+      and one cannot be computed when either cell is suppressed. Reporting coverage differs by petition
+      status — non-petitioned measures have zero reporting counties in 1997-2000 and 2010-2013.
+    examples:
+    - 'petitioned'
+    enum:
+    - 'non_petitioned'
+    - 'petitioned'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Petition Status
+    - property: short_description
+      value: 'How the case was handled: petitioned (formal) or non-petitioned (informal).'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: reporting_status
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'Coverage flag for the voluntary county reporting system, per measure (a county can report
+      delinquency but not dependency). ''reported'': the county reported and the count is published. ''suppressed'':
+      the county reported but the source masked the cell — ''*'' primary suppression of values 1-4 (671
+      cells), ''x'' secondary suppression of values 5-20 (16 cells), ''z'' secondary suppression of a
+      value over 20 (1 cell). ''not_reported'': the county did not report that measure (case_count is
+      NULL; never imputed, never zero). Distinguish not_reported from a real reported zero using this
+      flag, not the count.'
+    examples:
+    - 'reported'
+    enum:
+    - 'not_reported'
+    - 'reported'
+    - 'suppressed'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Reporting Status
+    - property: short_description
+      value: 'Whether the county reported this measure that year: reported, suppressed (reported but masked
+        at source), or not_reported.'
+    - property: null_meaning
+      value: NULL on state summary rows (coverage there is carried by counties_reporting instead).
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: case_count
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: Number of juvenile court cases DISPOSED (cases receiving a disposition during the calendar
+      year, per the source's definition) for the row's case type and petition status. Georgia's upper
+      age of juvenile-court jurisdiction is 16. State rows are NCJJ's aggregate over REPORTING counties
+      only — never a statewide total; compare across years only alongside counties_reporting (coverage
+      swings from 152 reporting counties in 1997 to 25 in 2009 to 41 in 2023). Suppressed and non-reported
+      cells are NULL, never zero; published zeros are real.
+    examples:
+    - 11708
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Case Count
+    - property: short_description
+      value: Juvenile court cases disposed in the county, year, case type, and petition status.
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL when the county did not report that measure that year (reporting_status = 'not_reported'),
+        when the reported cell is suppressed at source (reporting_status = 'suppressed'), or on state
+        rows when zero counties reported the measure (counties_reporting = 0). Zeros are real reported
+        zeros — never a stand-in for missing.
+    - property: key_metric
+      value: true
+  - name: case_rate_per_1000
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Cases disposed per 1,000 juveniles, as computed by the source — state rows only (all
+      county-row rate cells are unpublished in every year). NOT on the platform''s 0-1 rate scale: the
+      natural unit is cases per 1,000. The denominator is the juvenile population OF REPORTING COUNTIES
+      ONLY (age 10 through the upper age 16 for delinquency and status offense; age 0-16 for dependency),
+      so it tracks coverage, not the full state juvenile population — verified equal to case_count / reporting-population
+      x 1000 in every published cell. For custom rates (county-level, or statewide-population denominators),
+      join the juvenile_population topic.'
+    examples:
+    - 15.7
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Case Rate per 1000
+    - property: short_description
+      value: Source-computed cases per 1,000 juveniles in reporting counties (state rows only).
+    - property: null_meaning
+      value: NULL on all county rows (the source publishes rates for the state summary only) and on state
+        rows where zero counties reported the measure.
+  - name: counties_reporting
+    logicalType: integer
+    physicalType: bigint
+    required: false
+    description: 'State rows only: the number of counties (out of 159) whose juvenile courts reported
+      this measure that year, as published on the source''s state summary row (verified equal to the sum
+      of the per-county reporting flags in every measure-year). Always read alongside state case_count
+      — year-over-year change in a state total conflates caseload change with coverage change. 0 means
+      the measure was not collected that year and the state case_count is NULL.'
+    examples:
+    - 41
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Counties Reporting
+    - property: short_description
+      value: Number of counties (of 159) that reported this measure that year (state rows only).
+    - property: unit
+      value: count
+    - property: null_meaning
+      value: NULL on county rows; populated on state summary rows only.
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: case_type_in_allowed_values
+    description: case_type is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE case_type IS NOT NULL AND case_type NOT IN ('delinquency',
+      'dependency', 'status_offense')
+    mustBe: 0
+  - type: sql
+    name: petition_status_in_allowed_values
+    description: petition_status is one of the 2 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE petition_status IS NOT NULL AND petition_status NOT IN
+      ('non_petitioned', 'petitioned')
+    mustBe: 0
+  - type: sql
+    name: reporting_status_in_allowed_values
+    description: reporting_status is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status IS NOT NULL AND reporting_status NOT IN
+      ('not_reported', 'reported', 'suppressed')
+    mustBe: 0
+  - type: sql
+    name: case_count_non_negative
+    description: case_count is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE case_count IS NOT NULL AND case_count < 0
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_non_negative
+    description: counties_reporting is a count (>= 0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE counties_reporting IS NOT NULL AND counties_reporting <
+      0
+    mustBe: 0
+  - type: sql
+    name: not_reported_implies_null_count
+    description: A county-measure the county did not report can carry no count — coverage is flagged,
+      never imputed.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'not_reported' AND case_count IS NOT
+      NULL
+    mustBe: 0
+  - type: sql
+    name: suppressed_implies_null_count
+    description: A source-suppressed cell must be NULL in gold — the masked value is never reconstructed
+      or zero-filled.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'suppressed' AND case_count IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: reported_implies_count_present
+    description: 'A county-measure flagged ''reported'' always has a published numeric count (verified
+      exhaustive in bronze: reporting flag 1 pairs only with a numeric value or a suppression marker).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE reporting_status = 'reported' AND case_count IS NULL
+    mustBe: 0
+  - type: sql
+    name: reporting_status_null_iff_state_row
+    description: 'reporting_status applies to county rows only: NULL on every state row, non-NULL on every
+      county row (state coverage is carried by counties_reporting).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (county_fips IS NULL AND reporting_status IS NOT NULL)
+      OR (county_fips IS NOT NULL AND reporting_status IS NULL)
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_on_state_rows_only
+    description: counties_reporting is a state-row coverage measure — NULL on every county row, populated
+      on every state row.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (county_fips IS NOT NULL AND counties_reporting IS NOT
+      NULL) OR (county_fips IS NULL AND counties_reporting IS NULL)
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_matches_county_flags
+    description: The state row's published count of reporting counties must equal the number of county
+      rows with reporting_status 'reported' or 'suppressed' for that year and measure (verified exact
+      in all 156 bronze measure-years).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, case_type, petition_status, MAX(CASE WHEN county_fips IS
+      NULL THEN counties_reporting END) AS cr, SUM(CASE WHEN county_fips IS NOT NULL AND reporting_status
+      != 'not_reported' THEN 1 ELSE 0 END) AS reporting_rows FROM {object} GROUP BY year, case_type, petition_status)
+      WHERE cr IS NOT NULL AND cr != reporting_rows
+    mustBe: 0
+  - type: sql
+    name: state_count_null_iff_zero_counties_reporting
+    description: 'The state aggregate is published exactly when at least one county reported the measure
+      (verified exact in bronze: state ''--'' pairs only with a zero reporting flag).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE county_fips IS NULL AND ((case_count IS NULL) != (counties_reporting
+      = 0))
+    mustBe: 0
+  - type: sql
+    name: state_count_at_least_visible_county_sum
+    description: The state row sums reporting counties INCLUDING suppressed cells, so it must be >= the
+      sum of visible county counts for every year and measure.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, case_type, petition_status, MAX(CASE WHEN county_fips IS
+      NULL THEN case_count END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN case_count
+      END) AS county_sum FROM {object} GROUP BY year, case_type, petition_status) WHERE state_total IS
+      NOT NULL AND county_sum IS NOT NULL AND state_total < county_sum
+    mustBe: 0
+  - type: sql
+    name: state_count_equals_county_sum_when_no_suppression
+    description: When no county cell is suppressed for a year and measure, the state aggregate must equal
+      the county sum exactly (verified in bronze; the gap in other groups is exactly the suppressed cells).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM (SELECT year, case_type, petition_status, MAX(CASE WHEN county_fips IS
+      NULL THEN case_count END) AS state_total, SUM(CASE WHEN county_fips IS NOT NULL THEN case_count
+      END) AS county_sum, SUM(CASE WHEN reporting_status = 'suppressed' THEN 1 ELSE 0 END) AS n_suppressed
+      FROM {object} GROUP BY year, case_type, petition_status) WHERE state_total IS NOT NULL AND county_sum
+      IS NOT NULL AND n_suppressed = 0 AND state_total != county_sum
+    mustBe: 0
+  - type: sql
+    name: rate_on_state_rows_only
+    description: The source publishes per-1,000 rates for the state summary only — every county-row rate
+      cell is unpublished in all 26 years (verified).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE county_fips IS NOT NULL AND case_rate_per_1000 IS NOT NULL
+    mustBe: 0
+  - type: sql
+    name: state_rate_null_iff_state_count_null
+    description: On state rows the published rate and count are co-null — a rate exists exactly when the
+      aggregate count does (verified exact in bronze).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE county_fips IS NULL AND ((case_rate_per_1000 IS NULL) !=
+      (case_count IS NULL))
+    mustBe: 0
+  - type: sql
+    name: case_rate_per_1000_non_negative
+    description: Rates cannot be negative. (Authored because per-1,000 rates carry no unit marker — neither
+      'proportion' nor 'ratio' describes a per-1,000 scale.)
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE case_rate_per_1000 IS NOT NULL AND case_rate_per_1000 <
+      0
+    mustBe: 0
+  - type: sql
+    name: all_159_counties_every_measure
+    description: Every published year lists all 159 Georgia counties for every case type and petition
+      status (non-reporters included with NULL counts).
+    dimension: completeness
+    query: SELECT COUNT(*) FROM (SELECT year, case_type, petition_status, COUNT(CASE WHEN county_fips
+      IS NOT NULL THEN 1 END) AS n_counties FROM {object} GROUP BY year, case_type, petition_status) WHERE
+      n_counties != 159
+    mustBe: 0
+  - type: sql
+    name: counties_reporting_within_159
+    description: No measure-year can have more reporting counties than Georgia has counties.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE counties_reporting > 159
+    mustBe: 0
+customProperties:
+- property: title
+  value: Juvenile Court Case Counts
+- property: summary
+  value: Juvenile court cases disposed per Georgia county and year by case type and petition status, 1997-2023
+    — with explicit reporting-coverage flags (not all counties report).
+- property: source
+  value: OJJDP Statistical Briefing Book — Easy Access to State and County Juvenile Court Case Counts
+    (EZACO)
+- property: source_url
+  value: https://ojjdp.ojp.gov/statistical-briefing-book/data-analysis-tools/ezaco/access-case-counts
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 1997-2023
+- property: schema_hash
+  value: 0e0036f7ce4fb3de8f7a72a1742fd9359de3fc305224d00bacdfe9495a4e39e7
+- property: available_years
+  value:
+  - 1997
+  - 1998
+  - 1999
+  - 2000
+  - 2001
+  - 2002
+  - 2003
+  - 2004
+  - 2005
+  - 2006
+  - 2007
+  - 2008
+  - 2009
+  - 2010
+  - 2011
+  - 2012
+  - 2013
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2020
+  - 2021
+  - 2022
+  - 2023
+- property: year_gaps
+  value:
+  - 2014

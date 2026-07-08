@@ -1,0 +1,763 @@
+apiVersion: v3.1.0
+kind: DataContract
+id: education.ccrpi_content_mastery
+name: ccrpi_content_mastery
+version: 2.0.0
+status: active
+domain: education
+tenant: georgia-public-data
+description:
+  purpose: 'CCRPI Content Mastery measures student proficiency on Georgia state assessments in core academic
+    subjects at the school, district, and (2014+) state level, broken out by demographic subgroup, grade
+    cluster, and (2012-2017) assessment type. The primary `indicator_score` metric unifies four source
+    labels across eras: Meets & Exceeds Rate (2012-2014, CRCT/EOCT), Weighted Proficiency Rate (2015-2017,
+    EOG/EOC; exceeds 100 by design), Indicator Score (2018-2019, 2022-2025), and Achievement Rate (2021).
+    2021-2022 add four learner-band proportions with derived `_or_above` cumulatives; 2018-2019 and 2023-2025
+    add an improvement `indicator_target` and a color `ccrpi_flag`. 2020 is absent — Georgia paused CCRPI
+    during COVID. This is the deep-dive into the Content Mastery component only (by demographic, subject,
+    and assessment type); the overall CCRPI score and the side-by-side scorecard of all five rolled-up
+    component scores live in the `ccrpi_scoring_by_component` topic (the CCRPI overview), which this topic
+    does not duplicate.'
+  usage: Star-schema fact table. Join the districts dimension on district_code; the schools dimension
+    on district_code + school_code; the demographics dimension on demographic. Read directly with DuckDB
+    over Parquet.
+  limitations: Suppressed cells are NULL (not zero). State rows have NULL district_code and school_code.
+    District rows have NULL school_code.
+tags:
+- education
+- georgia insights
+- ccrpi_content_mastery
+servers:
+- server: s3_gold
+  type: s3
+  location: s3://georgia-data-gold/education/ccrpi_content_mastery/**/*.parquet
+  format: parquet
+- server: local_gold
+  type: local
+  path: data/gold/education/ccrpi_content_mastery/**/*.parquet
+  format: parquet
+schema:
+- name: ccrpi_content_mastery
+  logicalType: object
+  physicalType: parquet
+  physicalName: ccrpi_content_mastery
+  description: ccrpi_content_mastery fact table, year-partitioned Parquet (split by detail level where
+    present).
+  dataGranularityDescription: One row per year, district_code, school_code, demographic, grade_cluster,
+    subject (geography columns are NULL at higher aggregation levels).
+  customProperties:
+  - property: sub_topic
+    value: georgiainsights
+  - property: detail_levels
+    value:
+    - schools
+    - districts
+    - states
+  - property: default_detail
+    value: schools
+  - property: grain
+    value:
+    - year
+    - district_code
+    - school_code
+    - demographic
+    - grade_cluster
+    - subject
+  - property: key_metric
+    value: indicator_score
+  - property: null_semantics
+    value:
+      suppressed_to_null: true
+      zero_is_real: true
+  - property: partition_columns
+    value:
+    - year
+  - property: path_template
+    value: education/ccrpi_content_mastery/year={year}/{detail}.parquet
+  - property: foreign_keys
+    value:
+    - column: district_code
+      target_object: districts
+      target_columns:
+      - district_code
+      attribute_columns:
+      - district_name
+      - district_census_id
+      - district_type
+      scope: domain
+    - column: school_code
+      target_object: schools
+      target_columns:
+      - district_code
+      - school_code
+      attribute_columns:
+      - school_name
+      scope: domain
+    - column: demographic
+      target_object: demographics
+      target_columns:
+      - demographic
+      attribute_columns:
+      - demographic_label
+      - demographic_category
+      scope: global
+  - property: example_queries
+    value:
+    - description: Latest year (2025), schools detail
+      query: SELECT * FROM ccrpi_content_mastery WHERE year = 2025 LIMIT 100
+    - description: District 601 in 2025
+      query: SELECT * FROM ccrpi_content_mastery WHERE district_code = '601' AND year = 2025 LIMIT 100
+    - description: Filter by grade_cluster = elementary
+      query: SELECT * FROM ccrpi_content_mastery WHERE grade_cluster = 'elementary' AND year = 2025 LIMIT
+        100
+  properties:
+  - name: year
+    logicalType: integer
+    physicalType: int
+    required: true
+    description: Ending calendar year of the school year (2025 = 2024-2025). Sourced from the bronze `School
+      Year` column, cross-checked against the filename year. 2020 does not exist (COVID pause).
+    examples:
+    - 2025
+    customProperties:
+    - property: column_role
+      value: year
+    - property: label
+      value: Year
+    primaryKey: true
+    primaryKeyPosition: 1
+  - name: district_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 3-digit GOSA district code (zero-padded) for standard districts; 7-digit code for state-charter
+      systems; the allowlisted pseudo-district code `RTC` (Residential Treatment Center aggregate, 2015-2017
+      only). NULL for state-level rows. FK to districts dimension.
+    examples:
+    - '601'
+    relationships:
+    - to: districts.district_code
+    customProperties:
+    - property: column_role
+      value: fk_district
+    - property: label
+      value: District Code
+    primaryKey: true
+    primaryKeyPosition: 2
+  - name: school_code
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 4-digit GOSA school code (zero-padded; bronze strips leading zeros from some codes).
+      NULL for district- and state-level rows. FK to schools dimension (composite key with district_code).
+    examples:
+    - '0182'
+    relationships:
+    - to: schools.district_code
+    - to: schools.school_code
+    customProperties:
+    - property: column_role
+      value: fk_school
+    - property: label
+      value: School Code
+    primaryKey: true
+    primaryKeyPosition: 3
+  - name: demographic
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Canonical demographic code (FK to demographics dimension). `all` is the unfiltered total.
+      Race uses the combined `asian_pacific_islander` bucket — the source publishes the explicit `Asian/Pacific
+      Islander` label in every era and never separate Asian or Pacific Islander rows. Cross-era label
+      spellings (`American Indian/Alaskan [Native]`, `Students With/with Disability`) fold into single
+      canonical keys.
+    examples:
+    - 'black'
+    relationships:
+    - to: demographics.demographic
+    enum:
+    - 'all'
+    - 'asian_pacific_islander'
+    - 'black'
+    - 'economically_disadvantaged'
+    - 'english_learners'
+    - 'hispanic'
+    - 'multiracial'
+    - 'native_american'
+    - 'students_with_disabilities'
+    - 'white'
+    customProperties:
+    - property: column_role
+      value: fk_demographic
+    - property: label
+      value: Demographic
+    - property: short_description
+      value: Which student group the row covers - `all`, a race, or a special population (economically
+        disadvantaged, English learners, students with disabilities).
+    - property: has_total
+      value: true
+    - property: total_value
+      value: 'all'
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 4
+  - name: grade_cluster
+    logicalType: string
+    physicalType: string
+    required: true
+    description: 'Grade cluster the row aggregates: `elementary`, `middle`, or `high` (bronze single-letter
+      E/M/H expanded). A cluster of grades, not a single grade — distinct from `grade_level` per §16.'
+    examples:
+    - 'elementary'
+    enum:
+    - 'elementary'
+    - 'high'
+    - 'middle'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Grade Cluster
+    - property: short_description
+      value: 'Grade band the row covers: elementary, middle, or high.'
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 5
+  - name: assessment_type
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'Georgia state assessment program: `crct`/`eoct` (2012-2014) or `eog`/`eoc` (2015-2017).
+      NULL for every 2018+ row — the source dropped the column when CCRPI consolidated to four broad indicators.
+      An attribute of the row, not part of the grain: the two programs never report the same (grade_cluster,
+      subject) pair, so it is functionally determined by the rest of the key.'
+    examples:
+    - 'eog'
+    enum:
+    - 'crct'
+    - 'eoc'
+    - 'eoct'
+    - 'eog'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Assessment Type
+    - property: short_description
+      value: Which state testing program the score came from (CRCT/EOCT or EOG/EOC); NULL for 2018 and
+        later.
+    - property: null_meaning
+      value: Row is from 2018+ where the source no longer reports an assessment program breakdown.
+    - property: has_total
+      value: false
+  - name: subject
+    logicalType: string
+    physicalType: string
+    required: true
+    description: Academic subject assessed, snake_case. 2018+ uses 4 broad areas (english_language_arts,
+      mathematics, science, social_studies); 2012-2017 split into 12-13 granular subjects (CRCT `reading`
+      is a distinct subject, not an ELA alias). The 2021-2022 label `English` folds into `english_language_arts`.
+      Social studies has roughly half the rows of other subjects in 2021+ (assessed only in high school
+      and part of middle).
+    examples:
+    - 'mathematics'
+    enum:
+    - '9th_grade_literature_and_composition'
+    - 'algebra_i_coordinate_algebra'
+    - 'american_literature_and_composition'
+    - 'biology'
+    - 'economics_business_free_enterprise'
+    - 'english_language_arts'
+    - 'geometry_analytic_geometry'
+    - 'mathematics'
+    - 'mathematics_1'
+    - 'mathematics_2'
+    - 'physical_science'
+    - 'reading'
+    - 'science'
+    - 'social_studies'
+    - 'us_history'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: Subject
+    - property: short_description
+      value: Academic subject tested (e.g. mathematics, science); broad areas from 2018, more granular
+        subjects before.
+    - property: has_total
+      value: false
+    - property: key_metric_grain_contributor
+      value: true
+    primaryKey: true
+    primaryKeyPosition: 6
+  - name: participation_rate
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of eligible students assessed, 0-1 decimal scale. Bronze ships 0-100 in 2012-2017
+      and 2021-2022 (divided by 100 here) and 0-1 in 2018-2019 and 2023-2025 (passed through). 94 rows
+      (21 in 2012, 73 in 2013; max 1.059/1.084 after scaling) legitimately exceed 1.0 — transfers-in inflated
+      the tested/enrolled ratio before GaDOE began capping in 2014. Preserved verbatim, hence unit `ratio`,
+      not `proportion`. State-level participation collapses to ~0.65 in 2021 (COVID-year testing disruption)
+      versus ~0.98-0.99 in every other year — faithful to bronze, not a scaling artifact.
+    examples:
+    - 0.987
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Participation Rate
+    - property: unit
+      value: ratio
+    - property: null_meaning
+      value: Suppressed by GaDOE (`Too Few Students`/`TFS`, `No Data`, or `NA`).
+  - name: indicator_score
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Primary content-mastery metric on its natural 0-100 SCORE scale (exempt from the 0-1
+      percentage convention). Unifies Meets & Exceeds Rate (2012-2014), Weighted Proficiency Rate (2015-2017
+      — exceeds 100 by design, max observed 146.154), Indicator Score (2018-2019, 2022-2025), and Achievement
+      Rate (2021). No upper bound is declared because >100 is legitimate. The `100.00+` top-cap sentinel
+      is repaired two ways: 2021 (1,772 rows) reconstructed from the learner bands as 0.5*developing +
+      proficient + 1.5*distinguished (verified to rounding precision on all numeric 2021 rows; reconstructed
+      values span [100.005, 150.0]); 2023 (2,683 rows) capped at 100.0 because no learner bands exist
+      that year to reconstruct from.'
+    examples:
+    - 74.3
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Indicator Score
+    - property: short_description
+      value: Content-mastery proficiency score on a 0-100 scale (can exceed 100 in some years by design);
+        NULL when suppressed.
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: null_meaning
+      value: Suppressed by GaDOE (`Too Few Students`/`TFS`, `No Data`, or `NA`).
+    - property: key_metric
+      value: true
+  - name: pct_beginning_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share of students at the Beginning Learner band, 0-1 scale (bronze 0-100 divided by 100).
+      Published only for 2021-2022; NULL every other year.
+    examples:
+    - 0.21
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Beginning Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Year outside 2021-2022 (bands not published), or suppressed by GaDOE (all four bands suppress
+        together).
+  - name: pct_developing_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at the Developing Learner band, 0-1 scale. Published only for 2021-2022; NULL every
+      other year.
+    examples:
+    - 0.34
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Developing Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Year outside 2021-2022 (bands not published), or suppressed by GaDOE (all four bands suppress
+        together).
+  - name: pct_proficient_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at the Proficient Learner band, 0-1 scale. Published only for 2021-2022; NULL every
+      other year.
+    examples:
+    - 0.29
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Proficient Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Year outside 2021-2022 (bands not published), or suppressed by GaDOE (all four bands suppress
+        together).
+  - name: pct_distinguished_learner
+    logicalType: number
+    physicalType: double
+    required: false
+    description: Share at the Distinguished Learner band, 0-1 scale. Published only for 2021-2022; NULL
+      every other year. The four bands sum to 1.0 within rounding except for 146 defective 2021 source
+      rows (worst sum 0.7646) — preserved as published.
+    examples:
+    - 0.16
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Distinguished Learner
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: Year outside 2021-2022 (bands not published), or suppressed by GaDOE (all four bands suppress
+        together).
+  - name: pct_developing_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Derived cumulative: developing + proficient + distinguished, 0-1 scale, clipped at 1.0
+      (independent rounding can overshoot by up to 0.0002). NULL when any summand is NULL. Only populated
+      for 2021-2022.'
+    examples:
+    - 0.79
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Developing Learner or Above
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: NULL whenever the underlying bands are NULL (year outside 2021-2022, or suppressed).
+  - name: pct_proficient_learner_or_above
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'Derived cumulative: proficient + distinguished, 0-1 scale, clipped at 1.0. NULL when
+      any summand is NULL. Only populated for 2021-2022.'
+    examples:
+    - 0.45
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Percent Proficient Learner or Above
+    - property: unit
+      value: proportion
+    - property: null_meaning
+      value: NULL whenever the underlying bands are NULL (year outside 2021-2022, or suppressed).
+  - name: indicator_target
+    logicalType: number
+    physicalType: double
+    required: false
+    description: 'CCRPI improvement target on the same 0-100 scale as indicator_score (observed range
+      [1.7, 95.0]; unlike indicator_score it is bounded at 100). Published only for 2018-2019 and 2023-2025.
+      Every 2024 mathematics row is NULL by design — GaDOE computed no math targets during the new-math-standards
+      rollout. NOT cross-topic comparable: each CCRPI topic''s target inherits its companion metric''s
+      scale (§16).'
+    examples:
+    - 82.5
+    customProperties:
+    - property: column_role
+      value: metric
+    - property: label
+      value: Indicator Target
+    - property: unit
+      value: score
+    - property: value_min
+      value: 0
+    - property: value_max
+      value: 100
+    - property: null_meaning
+      value: Year outside 2018-2019/2023-2025, suppressed (`NA`/`TFS`), or a 2024 mathematics row (no
+        math targets computed that year).
+  - name: ccrpi_flag
+    logicalType: string
+    physicalType: string
+    required: false
+    description: 'CCRPI performance color flag: `green`, `green_star` (green with caveat), `yellow`, or
+      `red` (bronze G/G*/Y/R recoded per §16). Published only for 2018-2019 and 2023-2025; bronze `NA`
+      becomes NULL. A derived performance attribute functionally determined by the rest of the row key,
+      so it is excluded from the contract grain.'
+    examples:
+    - 'green'
+    enum:
+    - 'green'
+    - 'green_star'
+    - 'red'
+    - 'yellow'
+    customProperties:
+    - property: column_role
+      value: categorical
+    - property: label
+      value: CCRPI Flag
+    - property: short_description
+      value: Performance color flag (green, green_star, yellow, red); published only 2018-2019 and 2023-2025.
+    - property: null_meaning
+      value: Year outside 2018-2019/2023-2025, bronze `NA` (not rated), or a 2024 mathematics row (no
+        math flags that year).
+    - property: has_total
+      value: false
+  quality:
+  - type: sql
+    name: non_empty
+    description: The dataset has at least one row.
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object}
+    mustBeGreaterThan: 0
+  - type: sql
+    name: demographic_in_allowed_values
+    description: demographic is one of the 10 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE demographic IS NOT NULL AND demographic NOT IN ('all',
+      'asian_pacific_islander', 'black', 'economically_disadvantaged', 'english_learners', 'hispanic',
+      'multiracial', 'native_american', 'students_with_disabilities', 'white')
+    mustBe: 0
+  - type: sql
+    name: grade_cluster_in_allowed_values
+    description: grade_cluster is one of the 3 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE grade_cluster IS NOT NULL AND grade_cluster NOT IN ('elementary',
+      'high', 'middle')
+    mustBe: 0
+  - type: sql
+    name: assessment_type_in_allowed_values
+    description: assessment_type is one of the 4 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE assessment_type IS NOT NULL AND assessment_type NOT IN
+      ('crct', 'eoc', 'eoct', 'eog')
+    mustBe: 0
+  - type: sql
+    name: subject_in_allowed_values
+    description: subject is one of the 15 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE subject IS NOT NULL AND subject NOT IN ('9th_grade_literature_and_composition',
+      'algebra_i_coordinate_algebra', 'american_literature_and_composition', 'biology', 'economics_business_free_enterprise',
+      'english_language_arts', 'geometry_analytic_geometry', 'mathematics', 'mathematics_1', 'mathematics_2',
+      'physical_science', 'reading', 'science', 'social_studies', 'us_history')
+    mustBe: 0
+  - type: sql
+    name: participation_rate_non_negative
+    description: participation_rate is a ratio (>= 0; may legitimately exceed 1.0).
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE participation_rate IS NOT NULL AND participation_rate <
+      0
+    mustBe: 0
+  - type: sql
+    name: pct_beginning_learner_within_unit_interval
+    description: pct_beginning_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_beginning_learner IS NOT NULL AND (pct_beginning_learner
+      < 0 OR pct_beginning_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_developing_learner_within_unit_interval
+    description: pct_developing_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner IS NOT NULL AND (pct_developing_learner
+      < 0 OR pct_developing_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_learner_within_unit_interval
+    description: pct_proficient_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner IS NOT NULL AND (pct_proficient_learner
+      < 0 OR pct_proficient_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_distinguished_learner_within_unit_interval
+    description: pct_distinguished_learner is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_distinguished_learner IS NOT NULL AND (pct_distinguished_learner
+      < 0 OR pct_distinguished_learner > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_developing_learner_or_above_within_unit_interval
+    description: pct_developing_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_developing_learner_or_above IS NOT NULL AND (pct_developing_learner_or_above
+      < 0 OR pct_developing_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: pct_proficient_learner_or_above_within_unit_interval
+    description: pct_proficient_learner_or_above is a bounded proportion on the [0, 1] scale.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE pct_proficient_learner_or_above IS NOT NULL AND (pct_proficient_learner_or_above
+      < 0 OR pct_proficient_learner_or_above > 1)
+    mustBe: 0
+  - type: sql
+    name: indicator_target_within_range
+    description: indicator_target is within its declared [0, 100] range.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE indicator_target IS NOT NULL AND (indicator_target < 0
+      OR indicator_target > 100)
+    mustBe: 0
+  - type: sql
+    name: ccrpi_flag_in_allowed_values
+    description: ccrpi_flag is one of the 4 canonical codes.
+    dimension: conformity
+    query: SELECT COUNT(*) FROM {object} WHERE ccrpi_flag IS NOT NULL AND ccrpi_flag NOT IN ('green',
+      'green_star', 'red', 'yellow')
+    mustBe: 0
+  - type: sql
+    name: learner_band_partition_2022
+    description: 'In 2022 the four learner-band proportions partition the tested population: they sum
+      to 1.0 within 0.025 on every fully-populated row. Verified against bronze: 0 violations (worst 2022
+      deviation is 0.0218). 2021 is covered by a budget-scoped check because it ships verified defective
+      rows.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year = 2022 AND pct_beginning_learner IS NOT NULL AND pct_developing_learner
+      IS NOT NULL AND pct_proficient_learner IS NOT NULL AND pct_distinguished_learner IS NOT NULL AND
+      ABS(pct_beginning_learner + pct_developing_learner + pct_proficient_learner + pct_distinguished_learner
+      - 1.0) > 0.025
+    mustBe: 0
+  - type: sql
+    name: learner_band_partition_2021_budget
+    description: 2021 ships 146 rows whose bands sum materially below 1.0 (verified source defect, preserved
+      per §4b), of which 26 deviate beyond the 0.025 tolerance. This budget check pins the defect from
+      growing (allows <30 for float-boundary jitter) while still catching any transform-introduced scale
+      error, which would violate by tens of thousands of rows.
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year = 2021 AND pct_beginning_learner IS NOT NULL AND pct_developing_learner
+      IS NOT NULL AND pct_proficient_learner IS NOT NULL AND pct_distinguished_learner IS NOT NULL AND
+      ABS(pct_beginning_learner + pct_developing_learner + pct_proficient_learner + pct_distinguished_learner
+      - 1.0) > 0.025
+    mustBeLessThan: 30
+  - type: sql
+    name: or_above_cumulative_consistency
+    description: 'The derived cumulatives equal the clipped sums of their bands on every populated row:
+      pct_developing_learner_or_above = LEAST(developing + proficient + distinguished, 1.0) and pct_proficient_learner_or_above
+      = LEAST(proficient + distinguished, 1.0), to float precision (1e-9). Structural: the transform derives
+      them exactly this way.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (pct_developing_learner_or_above IS NOT NULL AND ABS(pct_developing_learner_or_above
+      - LEAST(pct_developing_learner + pct_proficient_learner + pct_distinguished_learner, 1.0)) > 0.000000001)
+      OR (pct_proficient_learner_or_above IS NOT NULL AND ABS(pct_proficient_learner_or_above - LEAST(pct_proficient_learner
+      + pct_distinguished_learner, 1.0)) > 0.000000001)
+    mustBe: 0
+  - type: sql
+    name: learner_band_co_suppression
+    description: 'Learner-band suppression is all-or-nothing: the four band proportions and the two derived
+      cumulatives are either all populated or all NULL on every row. Verified against bronze 2021-2022:
+      0 partially suppressed rows.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE (pct_beginning_learner IS NULL) <> (pct_developing_learner
+      IS NULL) OR (pct_beginning_learner IS NULL) <> (pct_proficient_learner IS NULL) OR (pct_beginning_learner
+      IS NULL) <> (pct_distinguished_learner IS NULL) OR (pct_beginning_learner IS NULL) <> (pct_developing_learner_or_above
+      IS NULL) OR (pct_beginning_learner IS NULL) <> (pct_proficient_learner_or_above IS NULL)
+    mustBe: 0
+  - type: sql
+    name: learner_bands_only_2021_2022
+    description: 'Structural: learner-band columns are published only in 2021-2022 — every band and cumulative
+      is NULL for all other years.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year NOT IN (2021, 2022) AND (pct_beginning_learner IS
+      NOT NULL OR pct_developing_learner IS NOT NULL OR pct_proficient_learner IS NOT NULL OR pct_distinguished_learner
+      IS NOT NULL OR pct_developing_learner_or_above IS NOT NULL OR pct_proficient_learner_or_above IS
+      NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: score_band_co_null_2021_2022
+    description: 'In 2021-2022 the composite score and the learner bands suppress together: indicator_score
+      is NULL exactly when the bands are NULL. Verified against bronze: 0 mismatches in either year (the
+      2021 `100.00+` sentinel rows all carry numeric bands).'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2021, 2022) AND (indicator_score IS NULL) <> (pct_beginning_learner
+      IS NULL)
+    mustBe: 0
+  - type: sql
+    name: assessment_type_era_coverage
+    description: 'Structural: assessment_type is populated on every 2012-2017 row (bronze ships the column
+      with zero nulls) and NULL on every 2018+ row (column dropped at source).'
+    dimension: completeness
+    query: SELECT COUNT(*) FROM {object} WHERE (year <= 2017 AND assessment_type IS NULL) OR (year >=
+      2018 AND assessment_type IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: indicator_target_flag_era_coverage
+    description: 'Structural: indicator_target and ccrpi_flag are published only in 2018-2019 and 2023-2025
+      — both NULL for every other year.'
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year NOT IN (2018, 2019, 2023, 2024, 2025) AND (indicator_target
+      IS NOT NULL OR ccrpi_flag IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: indicator_target_flag_2024_mathematics_null
+    description: Every 2024 mathematics row has NULL indicator_target and ccrpi_flag — GaDOE computed
+      neither during the 2023-2024 new-math-standards rollout (bronze ships literal `NA` on all 32,470
+      math rows; verified).
+    dimension: consistency
+    query: SELECT COUNT(*) FROM {object} WHERE year = 2024 AND subject = 'mathematics' AND (indicator_target
+      IS NOT NULL OR ccrpi_flag IS NOT NULL)
+    mustBe: 0
+  - type: sql
+    name: indicator_score_bounded_years
+    description: 'indicator_score never exceeds 100 in the years whose bronze metric is structurally capped
+      at 100: 2012-2014 (Meets & Exceeds Rate), 2018-2019 and 2022/2024/2025 (Indicator Score), and 2023
+      (enforced by the `100.00+` cap repair). Verified: per-year max is exactly 100.0 in all nine years.
+      Only 2015-2017 (Weighted Proficiency Rate, by design) and 2021 (sentinel reconstruction) may exceed
+      100, so a scale error in the bounded years cannot pass silently.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE year IN (2012, 2013, 2014, 2018, 2019, 2022, 2023, 2024,
+      2025) AND indicator_score IS NOT NULL AND indicator_score > 100
+    mustBe: 0
+  - type: sql
+    name: indicator_score_structural_ceiling
+    description: 'indicator_score never exceeds 150 in any year — the hard structural ceiling of the CCRPI
+      weighting (max weight 1.5 x 100). Observed maxima: 146.154 (2017 Weighted Proficiency Rate) and
+      exactly 150.0 (2021 sentinel reconstruction at 100%% distinguished). A 0-100 column read as basis
+      points or a double-scaled year would violate immediately.'
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE indicator_score IS NOT NULL AND indicator_score > 150
+    mustBe: 0
+  - type: sql
+    name: participation_rate_above_one_only_2012_2013
+    description: participation_rate exceeds 1.0 only in 2012-2013 (94 verified bronze rows, max 1.084
+      — transfers-in inflating the tested/enrolled ratio before GaDOE began capping at 100 in 2014). From
+      2014 on the source caps at 100%%, so any later value above 1.0 is a scale error, not a quirk.
+    dimension: accuracy
+    query: SELECT COUNT(*) FROM {object} WHERE year >= 2014 AND participation_rate IS NOT NULL AND participation_rate
+      > 1.0
+    mustBe: 0
+customProperties:
+- property: title
+  value: CCRPI Content Mastery
+- property: summary
+  value: Georgia student proficiency scores on state assessments (the CCRPI Content Mastery component)
+    by subject, grade cluster, and demographic subgroup, 2012-2025.
+- property: source
+  value: Georgia Insights (GaDOE)
+- property: source_url
+  value: https://georgiainsights.gadoe.org/data-downloads/
+- property: update_frequency
+  value: annual
+- property: year_range
+  value: 2012-2025
+- property: schema_hash
+  value: f8e9597e6cc0a0dc077c31b89d6bd3916db8ce038727fce0d8b670b651a8134e
+- property: available_years
+  value:
+  - 2012
+  - 2013
+  - 2014
+  - 2015
+  - 2016
+  - 2017
+  - 2018
+  - 2019
+  - 2021
+  - 2022
+  - 2023
+  - 2024
+  - 2025
+- property: year_gaps
+  value:
+  - 2020
