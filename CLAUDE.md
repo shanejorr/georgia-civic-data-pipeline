@@ -40,6 +40,7 @@ uv run ruff format src/                          # Format
 uv run python -m src.etl.{main_topic}.{sub_topic}.{topic}.transform   # Run transform (self-validates)
 uv run python scripts/validate_topic.py {main_topic} {topic}          # Re-run the generic validator
 uv run python scripts/check_bronze_freshness.py {main} {sub} {topic}  # Bronze checksum + unanalyzed-file gate
+uv run python scripts/check_referential_integrity.py [--all]          # Fact->dimension FK sweep
 uv run python scripts/check_approved_topics.py   # Detect drift in approved gold + dimension baselines
 uv run python scripts/generate_contracts.py      # (Re)generate ODCS contracts for approved topics
 uv run python scripts/generate_dimension_contracts.py  # (Re)emit the 4 dimension contracts
